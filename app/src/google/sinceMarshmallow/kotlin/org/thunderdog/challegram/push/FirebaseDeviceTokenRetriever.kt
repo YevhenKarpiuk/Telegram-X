@@ -12,18 +12,18 @@ import tgx.bridge.TokenRetrieverListener
 class FirebaseDeviceTokenRetriever : DefaultFirebaseTokenRetriever() {
   override fun fetchDeviceToken(context: Context, listener: TokenRetrieverListener) {
     try {
-      PushManagerBridge.log("FirebaseMessaging: registering...")
+      PushManagerBridge.log("TGX-Push: FCM token acquisition requested")
       FirebaseMessaging.getInstance().register().addOnSuccessListener(OnSuccessListener { _ ->
-        PushManagerBridge.log("FirebaseMessaging: successfully registered, obtaining installation ID...")
+        PushManagerBridge.log("TGX-Push: FirebaseMessaging registered, obtaining installation ID")
         FirebaseInstallations.getInstance().id
           .addOnSuccessListener { installationId ->
-            PushManagerBridge.log("FirebaseMessaging: successfully fetched installation ID: \"%s\"", installationId)
+            PushManagerBridge.log("TGX-Push: FCM token acquired: yes, length: %d", installationId.length)
             listener.onTokenRetrievalSuccess(DeviceTokenFirebaseCloudMessaging(installationId, true))
           }
           .addOnFailureListener { e: Exception? ->
             val errorName = extractFirebaseErrorName(e!!)
             PushManagerBridge.error(
-              "FirebaseMessaging: installation ID fetch failed ($errorName)",
+              "TGX-Push: Firebase installation ID fetch failed ($errorName)",
               e
             )
             listener.onTokenRetrievalError(errorName, e)
@@ -31,13 +31,13 @@ class FirebaseDeviceTokenRetriever : DefaultFirebaseTokenRetriever() {
       }).addOnFailureListener { e: Exception? ->
         val errorName = extractFirebaseErrorName(e!!)
         PushManagerBridge.error(
-          "FirebaseMessaging: registration failed ($errorName)",
+          "TGX-Push: FirebaseMessaging registration failed ($errorName)",
           e
         )
         listener.onTokenRetrievalError(errorName, e)
       }
     } catch (e: Throwable) {
-      PushManagerBridge.error("FirebaseMessaging: token fetch failed with error", e)
+      PushManagerBridge.error("TGX-Push: FCM token acquisition failed with error", e)
       listener.onTokenRetrievalError("FIREBASE_REQUEST_ERROR", e)
     }
   }

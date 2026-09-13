@@ -12,6 +12,7 @@ import tgx.bridge.PushManagerBridge
 abstract class DefaultFirebaseMessagingService : FirebaseMessagingService() {
 
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
+    PushManagerBridge.log("TGX-Push: push received")
     val payload = makePayload(remoteMessage)
     val sentTime: Long = remoteMessage.getSentTime()
     val ttl: Int = remoteMessage.getTtl()

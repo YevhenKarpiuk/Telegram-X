@@ -11,20 +11,20 @@ import tgx.bridge.TokenRetrieverListener
 class FirebaseDeviceTokenRetriever : DefaultFirebaseTokenRetriever() {
   override fun fetchDeviceToken(context: Context, listener: TokenRetrieverListener) {
     try {
-      PushManagerBridge.log("FirebaseMessaging: requesting token...")
+      PushManagerBridge.log("TGX-Push: FCM token acquisition requested")
       FirebaseMessaging.getInstance().token.addOnSuccessListener(OnSuccessListener { token ->
-        PushManagerBridge.log("FirebaseMessaging: successfully fetched token: \"%s\"", token)
+        PushManagerBridge.log("TGX-Push: FCM token acquired: yes, length: %d", token.length)
         listener.onTokenRetrievalSuccess(DeviceTokenFirebaseCloudMessaging(token, true))
       }).addOnFailureListener { e: Exception? ->
         val errorName = extractFirebaseErrorName(e!!)
         PushManagerBridge.error(
-          "FirebaseMessaging: token fetch failed ($errorName)",
+          "TGX-Push: FCM token acquisition failed ($errorName)",
           e
         )
         listener.onTokenRetrievalError(errorName, e)
       }
     } catch (e: Throwable) {
-      PushManagerBridge.error("FirebaseMessaging: token fetch failed with error", e)
+      PushManagerBridge.error("TGX-Push: FCM token acquisition failed with error", e)
       listener.onTokenRetrievalError("FIREBASE_REQUEST_ERROR", e)
     }
   }

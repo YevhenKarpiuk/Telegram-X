@@ -490,6 +490,15 @@ debugCall id:long debug:string = Ok;
       if (!checkRecordPermissions(context, tdlib, tdlib.cache().getCall(callId), 0, null)) {
         return;
       }
+      TGCallService service = TGCallService.currentInstance();
+      if (service == null || !service.compareCall(tdlib, callId)) {
+        Log.w(Log.TAG_VOIP, "TGX-Call-FGS: Answer blocked because TGCallService is unavailable");
+        return;
+      }
+      if (!service.prepareForIncomingCallAnswer()) {
+        Log.w(Log.TAG_VOIP, "TGX-Call-FGS: Answer blocked because microphone foreground promotion failed");
+        return;
+      }
       Log.v(Log.TAG_VOIP, "#%d: AcceptCall requested", callId);
       tdlib.client().send(new TdApi.AcceptCall(callId, VoIP.getProtocol()), object -> Log.v(Log.TAG_VOIP, "#%d: AcceptCall completed: %s", callId, object));
     }

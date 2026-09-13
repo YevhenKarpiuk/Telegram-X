@@ -865,6 +865,8 @@ if (generateBaselineProfile) {
 }
 
 dependencies {
+  testImplementation("junit:junit:4.13.2")
+  testImplementation("org.json:json:20240303")
   sinceNougatImplementation(libs.androidx.profileinstaller)
   flavorImplementation(
     libs.androidx.tracing.legacy,

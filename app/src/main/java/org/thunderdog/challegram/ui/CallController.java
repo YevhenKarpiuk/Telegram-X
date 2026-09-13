@@ -58,6 +58,7 @@ import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Fonts;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
+import org.thunderdog.challegram.tool.Strings;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.tool.Views;
 import org.thunderdog.challegram.util.CustomTypefaceSpan;
@@ -66,6 +67,7 @@ import org.thunderdog.challegram.util.RateLimiter;
 import org.thunderdog.challegram.util.text.TextColorSetOverride;
 import org.thunderdog.challegram.util.text.TextColorSets;
 import org.thunderdog.challegram.voip.gui.CallSettings;
+import org.thunderdog.challegram.voip.annotation.CallRecordingState;
 import org.thunderdog.challegram.widget.AvatarView;
 import org.thunderdog.challegram.widget.EmojiTextView;
 import org.thunderdog.challegram.widget.TextView;
@@ -82,7 +84,7 @@ import me.vkryl.core.ColorUtils;
 import me.vkryl.core.MathUtils;
 import me.vkryl.core.StringUtils;
 
-public class CallController extends ViewController<CallController.Arguments> implements TdlibCache.UserDataChangeListener, TdlibCache.CallStateChangeListener, View.OnClickListener, FactorAnimator.Target, Runnable, CallControlsLayout.CallControlCallback, Screen.StatusBarHeightChangeListener {
+public class CallController extends ViewController<CallController.Arguments> implements TdlibCache.UserDataChangeListener, TdlibCache.CallStateChangeListener, View.OnClickListener, FactorAnimator.Target, Runnable, CallControlsLayout.CallControlCallback, Screen.StatusBarHeightChangeListener, TGCallService.CallRecordingListener {
   private static final boolean DEBUG_FADE_BRANDING = true;
 
   private static class ButtonView extends View implements FactorAnimator.Target {
@@ -272,6 +274,14 @@ public class CallController extends ViewController<CallController.Arguments> imp
   private CallControlsLayout callControlsLayout;
 
   private FrameLayoutFix buttonWrap;
+  private LinearLayout recordingWrap, recordingButtonsWrap;
+  private TextView recordingStateView, recordingAutoView;
+  private TextView recordingStartButton, recordingPauseButton;
+  private TextView recordingResumeButton, recordingStopButton;
+  private @Nullable TGCallService recordingService;
+  private @CallRecordingState int recordingState = CallRecordingState.UNSUPPORTED;
+  private long recordingElapsedSamples;
+  private boolean autoRecordingEnabled;
   private ButtonView muteButtonView, speakerButtonView;
 
   private float lastHeaderFactor;
@@ -642,6 +652,48 @@ public class CallController extends ViewController<CallController.Arguments> imp
     contentView.addView(callControlsLayout);
     callControlsLayout.setCall(tdlib, call, false);
 
+    recordingWrap = new LinearLayout(context);
+    recordingWrap.setOrientation(LinearLayout.VERTICAL);
+    recordingWrap.setGravity(Gravity.CENTER);
+    params = FrameLayoutFix.newParams(
+      ViewGroup.LayoutParams.MATCH_PARENT,
+      ViewGroup.LayoutParams.WRAP_CONTENT,
+      Gravity.TOP
+    );
+    params.topMargin = startMargin + Screen.dp(138f);
+    params.leftMargin = params.rightMargin = Screen.dp(18f);
+    recordingWrap.setLayoutParams(params);
+
+    recordingStateView = new TextView(context);
+    recordingStateView.setTextColor(0xffffffff);
+    recordingStateView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15f);
+    recordingStateView.setTypeface(Fonts.getRobotoMedium());
+    recordingStateView.setGravity(Gravity.CENTER);
+    Views.setSimpleShadow(recordingStateView);
+    recordingWrap.addView(recordingStateView);
+
+    recordingAutoView = new TextView(context);
+    recordingAutoView.setTextColor(0xddffffff);
+    recordingAutoView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13f);
+    recordingAutoView.setGravity(Gravity.CENTER);
+    Views.setSimpleShadow(recordingAutoView);
+    recordingWrap.addView(recordingAutoView);
+
+    recordingButtonsWrap = new LinearLayout(context);
+    recordingButtonsWrap.setOrientation(LinearLayout.HORIZONTAL);
+    recordingButtonsWrap.setGravity(Gravity.CENTER);
+    recordingWrap.addView(recordingButtonsWrap);
+
+    recordingStartButton = newRecordingButton(context, R.id.btn_callRecordingStart);
+    recordingPauseButton = newRecordingButton(context, R.id.btn_callRecordingPause);
+    recordingResumeButton = newRecordingButton(context, R.id.btn_callRecordingResume);
+    recordingStopButton = newRecordingButton(context, R.id.btn_callRecordingStop);
+    recordingButtonsWrap.addView(recordingStartButton);
+    recordingButtonsWrap.addView(recordingPauseButton);
+    recordingButtonsWrap.addView(recordingResumeButton);
+    recordingButtonsWrap.addView(recordingStopButton);
+    contentView.addView(recordingWrap);
+
     // Data
 
     tdlib.cache().subscribeToCallUpdates(call.id, this);
@@ -658,6 +710,24 @@ public class CallController extends ViewController<CallController.Arguments> imp
     }
 
     return contentView;
+  }
+
+  private TextView newRecordingButton (Context context, int id) {
+    TextView button = new TextView(context);
+    button.setId(id);
+    button.setOnClickListener(this);
+    button.setTextColor(0xffffffff);
+    button.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13f);
+    button.setGravity(Gravity.CENTER);
+    button.setBackgroundColor(0x55000000);
+    button.setPadding(Screen.dp(12f), Screen.dp(7f), Screen.dp(12f), Screen.dp(7f));
+    LinearLayout.LayoutParams layoutParams = new LinearLayout.LayoutParams(
+      ViewGroup.LayoutParams.WRAP_CONTENT,
+      ViewGroup.LayoutParams.WRAP_CONTENT
+    );
+    layoutParams.setMargins(Screen.dp(4f), Screen.dp(8f), Screen.dp(4f), 0);
+    button.setLayoutParams(layoutParams);
+    return button;
   }
 
 
@@ -744,6 +814,79 @@ public class CallController extends ViewController<CallController.Arguments> imp
         UI.post(this, tdlib.context().calls().getTimeTillNextCallDurationUpdate(tdlib, call.id));
       }
     }
+  }
+
+  @Override
+  public void onCallRecordingStateChanged (
+    @CallRecordingState int state,
+    long elapsedSamples,
+    boolean autoRecordingEnabled
+  ) {
+    this.recordingState = state;
+    this.recordingElapsedSamples = elapsedSamples;
+    this.autoRecordingEnabled = autoRecordingEnabled;
+    updateCallRecordingUi();
+  }
+
+  private void updateCallRecordingUi () {
+    if (recordingWrap == null) {
+      return;
+    }
+    TGCallService service = TGCallService.currentInstance();
+    if (service != recordingService) {
+      if (recordingService != null) {
+        recordingService.removeCallRecordingListener(this);
+      }
+      recordingService = service != null && service.compareCall(tdlib, call.id) ? service : null;
+      if (recordingService != null) {
+        recordingService.setCallRecordingListener(this);
+      }
+    }
+    boolean activeCall = call.state.getConstructor() == TdApi.CallStateReady.CONSTRUCTOR;
+    recordingWrap.setVisibility(activeCall && recordingService != null ? View.VISIBLE : View.GONE);
+    if (!activeCall || recordingService == null) {
+      return;
+    }
+    recordingState = recordingService.getCallRecordingState();
+    recordingElapsedSamples = recordingService.getCallRecordingElapsedSamples();
+    autoRecordingEnabled = recordingService.isAutoCallRecordingEnabled();
+    recordingAutoView.setText(autoRecordingEnabled ? R.string.CallRecordingAutoOn : R.string.CallRecordingAutoOff);
+    String duration = Strings.buildDuration(recordingElapsedSamples / 48000L);
+    switch (recordingState) {
+      case CallRecordingState.IDLE:
+        recordingStateView.setText(R.string.CallRecordingNotRecording);
+        break;
+      case CallRecordingState.RECORDING:
+        recordingStateView.setText(Lang.getString(R.string.CallRecordingRecording, duration));
+        break;
+      case CallRecordingState.PAUSED:
+        recordingStateView.setText(Lang.getString(R.string.CallRecordingPaused, duration));
+        break;
+      case CallRecordingState.INACTIVE:
+        recordingStateView.setText(Lang.getString(R.string.CallRecordingStopped, duration));
+        break;
+      case CallRecordingState.FAILED:
+        recordingStateView.setText(R.string.CallRecordingFailed);
+        break;
+      case CallRecordingState.UNSUPPORTED:
+      case CallRecordingState.FINALIZED:
+      default:
+        recordingStateView.setText(R.string.CallRecordingUnsupported);
+        break;
+    }
+    recordingStartButton.setText(recordingState == CallRecordingState.INACTIVE ?
+      R.string.CallRecordingContinue : R.string.CallRecordingStart);
+    recordingPauseButton.setText(R.string.CallRecordingPause);
+    recordingResumeButton.setText(R.string.CallRecordingResume);
+    recordingStopButton.setText(R.string.CallRecordingStop);
+    recordingStartButton.setVisibility(
+      recordingState == CallRecordingState.IDLE || recordingState == CallRecordingState.INACTIVE ? View.VISIBLE : View.GONE
+    );
+    recordingPauseButton.setVisibility(recordingState == CallRecordingState.RECORDING ? View.VISIBLE : View.GONE);
+    recordingResumeButton.setVisibility(recordingState == CallRecordingState.PAUSED ? View.VISIBLE : View.GONE);
+    recordingStopButton.setVisibility(
+      recordingState == CallRecordingState.RECORDING || recordingState == CallRecordingState.PAUSED ? View.VISIBLE : View.GONE
+    );
   }
 
   private boolean buttonsVisible;
@@ -840,6 +983,14 @@ public class CallController extends ViewController<CallController.Arguments> imp
           callSettings.toggleSpeakerMode(this);
         }
       }
+    } else if (recordingService != null && viewId == R.id.btn_callRecordingStart) {
+      recordingService.startCallRecording();
+    } else if (recordingService != null && viewId == R.id.btn_callRecordingPause) {
+      recordingService.pauseCallRecording();
+    } else if (recordingService != null && viewId == R.id.btn_callRecordingResume) {
+      recordingService.resumeCallRecording();
+    } else if (recordingService != null && viewId == R.id.btn_callRecordingStop) {
+      recordingService.stopCallRecording();
     }
   }
 
@@ -882,6 +1033,7 @@ public class CallController extends ViewController<CallController.Arguments> imp
     this.callDuration = 0;
     setCallBarsCount(tdlib.context().calls().getCallBarsCount(tdlib, call.id));
     updateCallStrength();
+    updateCallRecordingUi();
     if (TD.isCancelled(call) || TD.isAcceptedOnOtherDevice(call) || TD.isDeclined(call) || (prevIsActive && callEnded) || TD.isMissed(call) || call.state.getConstructor() == TdApi.CallStateHangingUp.CONSTRUCTOR) {
       closeCall();
     } else {
@@ -969,6 +1121,7 @@ public class CallController extends ViewController<CallController.Arguments> imp
     updateEmoji();
     updateFlashing();
     updateCallStrength();
+    updateCallRecordingUi();
   }
 
   private boolean hadFocus;
@@ -1180,6 +1333,10 @@ public class CallController extends ViewController<CallController.Arguments> imp
     tdlib.cache().unsubscribeFromCallUpdates(call.id, this);
     tdlib.cache().removeUserDataListener(call.userId, this);
     avatarView.performDestroy();
+    if (recordingService != null) {
+      recordingService.removeCallRecordingListener(this);
+      recordingService = null;
+    }
   }
 
   @Override

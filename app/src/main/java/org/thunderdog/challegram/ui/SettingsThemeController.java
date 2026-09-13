@@ -62,6 +62,7 @@ import org.thunderdog.challegram.util.StringList;
 import org.thunderdog.challegram.v.CustomRecyclerView;
 import org.thunderdog.challegram.widget.RadioView;
 import org.thunderdog.challegram.widget.SliderWrapView;
+import org.thunderdog.challegram.voip.annotation.CallRecordingOutputMode;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -302,6 +303,21 @@ public class SettingsThemeController extends RecyclerViewController<SettingsThem
           v.getToggler().setRadioEnabled(Settings.instance().useCustomVibrations(), isUpdate);
         } else if (itemId == R.id.btn_confirmCalls) {
           v.getToggler().setRadioEnabled(Settings.instance().needOutboundCallsPrompt(), isUpdate);
+        } else if (itemId == R.id.btn_autoRecordCalls) {
+          v.getToggler().setRadioEnabled(Settings.instance().isAutoRecordingCallsEnabled(), isUpdate);
+        } else if (itemId == R.id.btn_callRecordingOutput) {
+          switch (Settings.instance().getCallRecordingOutputMode()) {
+            case CallRecordingOutputMode.MIXED_ONLY:
+              v.setData(R.string.CallRecordingMixedOnly);
+              break;
+            case CallRecordingOutputMode.SEPARATE_ONLY:
+              v.setData(R.string.CallRecordingSeparateOnly);
+              break;
+            case CallRecordingOutputMode.MIXED_AND_SEPARATE:
+            default:
+              v.setData(R.string.CallRecordingMixedAndSeparate);
+              break;
+          }
         } else if (itemId == R.id.btn_hideChatKeyboard) {
           v.getToggler().setRadioEnabled(Settings.instance().needHideChatKeyboardOnScroll(), isUpdate);
         } else if (itemId == R.id.btn_useInAppBrowser) {
@@ -611,6 +627,16 @@ public class SettingsThemeController extends RecyclerViewController<SettingsThem
       items.add(new ListItem(ListItem.TYPE_RADIO_SETTING, R.id.btn_confirmCalls, 0, R.string.ConfirmCalls));
       items.add(new ListItem(ListItem.TYPE_SHADOW_BOTTOM));
       items.add(new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, R.string.ConfirmCallsDesc));
+
+      items.add(new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.CallRecording));
+      items.add(new ListItem(ListItem.TYPE_SHADOW_TOP));
+      items.add(new ListItem(ListItem.TYPE_RADIO_SETTING, R.id.btn_autoRecordCalls, 0, R.string.AutoRecordCalls));
+      items.add(new ListItem(ListItem.TYPE_SEPARATOR_FULL));
+      items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_callRecordingOutput, 0, R.string.CallRecordingFiles));
+      items.add(new ListItem(ListItem.TYPE_SEPARATOR_FULL));
+      items.add(new ListItem(ListItem.TYPE_SETTING, R.id.btn_callRecordings, 0, R.string.CallRecordings));
+      items.add(new ListItem(ListItem.TYPE_SHADOW_BOTTOM));
+      items.add(new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, R.string.CallRecordingSettingsDesc));
 
       if (Config.CUSTOM_CAMERA_AVAILABLE) {
         items.add(new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.Camera));
@@ -1204,6 +1230,24 @@ public class SettingsThemeController extends RecyclerViewController<SettingsThem
       Settings.instance().setUseCustomVibrations(adapter.toggleView(v));
     } else if (viewId == R.id.btn_confirmCalls) {
       Settings.instance().setNeedOutboundCallsPrompt(adapter.toggleView(v));
+    } else if (viewId == R.id.btn_autoRecordCalls) {
+      Settings.instance().setAutoRecordingCallsEnabled(adapter.toggleView(v));
+    } else if (viewId == R.id.btn_callRecordingOutput) {
+      int mode = Settings.instance().getCallRecordingOutputMode();
+      showSettings(new SettingsWrapBuilder(R.id.btn_callRecordingOutput).setRawItems(new ListItem[] {
+        new ListItem(ListItem.TYPE_RADIO_OPTION, R.id.btn_callRecordingMixedAndSeparate, 0, R.string.CallRecordingMixedAndSeparate, R.id.btn_callRecordingOutput, mode == CallRecordingOutputMode.MIXED_AND_SEPARATE),
+        new ListItem(ListItem.TYPE_RADIO_OPTION, R.id.btn_callRecordingMixedOnly, 0, R.string.CallRecordingMixedOnly, R.id.btn_callRecordingOutput, mode == CallRecordingOutputMode.MIXED_ONLY),
+        new ListItem(ListItem.TYPE_RADIO_OPTION, R.id.btn_callRecordingSeparateOnly, 0, R.string.CallRecordingSeparateOnly, R.id.btn_callRecordingOutput, mode == CallRecordingOutputMode.SEPARATE_ONLY)
+      }).setIntDelegate((id, result) -> {
+        int selected = result.get(R.id.btn_callRecordingOutput);
+        int newMode = selected == R.id.btn_callRecordingMixedOnly ? CallRecordingOutputMode.MIXED_ONLY :
+          selected == R.id.btn_callRecordingSeparateOnly ? CallRecordingOutputMode.SEPARATE_ONLY :
+          CallRecordingOutputMode.MIXED_AND_SEPARATE;
+        Settings.instance().setCallRecordingOutputMode(newMode);
+        adapter.updateValuedSettingById(R.id.btn_callRecordingOutput);
+      }).setAllowResize(false));
+    } else if (viewId == R.id.btn_callRecordings) {
+      navigateTo(new CallRecordingsController(context, tdlib));
     } else if (viewId == R.id.btn_useInAppBrowser) {
       Settings.instance().setUseInAppBrowser(adapter.toggleView(v));
     } else if (viewId == R.id.btn_switchRtl) {

@@ -3,6 +3,7 @@
 .gradle
 .kotlin
 .idea
+.vscode/
 
 build
 .cxx
@@ -11,6 +12,7 @@ obj
 
 *.apk
 *.iml
+*:Zone.Identifier
 
 /builds
 
@@ -18,3 +20,4 @@ obj
 /local.properties
 
 libc++_shared.so
+/build.log

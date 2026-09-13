@@ -6,5 +6,6 @@
   <external-path name="files" path="." />
   <external-path name="miui" path="MIUI/ringtone/" />
   <files-path name="ringtones" path="ringtones/" />
+  <cache-path name="call_recording_exports" path="call_recording_exports/" />
 
 </paths>

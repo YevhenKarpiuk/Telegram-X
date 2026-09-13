@@ -85,6 +85,7 @@ import org.thunderdog.challegram.util.DeviceStorageError;
 import org.thunderdog.challegram.util.DeviceTokenType;
 import org.thunderdog.challegram.util.FeatureAvailability;
 import org.thunderdog.challegram.util.StringList;
+import org.thunderdog.challegram.voip.annotation.CallRecordingOutputMode;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -217,6 +218,8 @@ public class Settings {
   private static final String KEY_EMOJI_MODE = "settings_emoji";
   private static final String KEY_REACTION_AVATARS_MODE = "settings_reaction_avatars";
   private static final String KEY_AUTO_UPDATE_MODE = "settings_auto_update";
+  private static final String KEY_AUTO_RECORD_CALLS = "calls_auto_record";
+  private static final String KEY_CALL_RECORDING_OUTPUT_MODE = "calls_recording_output";
   private static final String KEY_INCOGNITO = "settings_incognito";
   private static final String KEY_NIGHT_MODE = "settings_night_mode";
   private static final String KEY_VIDEO_LIMIT = "settings_video_limit";
@@ -3518,6 +3521,34 @@ public class Settings {
 
   public void setNeedOutboundCallsPrompt (boolean needPrompt) {
     setSetting(FLAG_OTHER_OUTBOUND_CALLS_PROMPT, needPrompt);
+  }
+
+  public boolean isAutoRecordingCallsEnabled () {
+    return pmc.getBoolean(KEY_AUTO_RECORD_CALLS, false);
+  }
+
+  public void setAutoRecordingCallsEnabled (boolean enabled) {
+    pmc.putBoolean(KEY_AUTO_RECORD_CALLS, enabled);
+  }
+
+  public @CallRecordingOutputMode int getCallRecordingOutputMode () {
+    int mode = pmc.getInt(
+      KEY_CALL_RECORDING_OUTPUT_MODE,
+      CallRecordingOutputMode.MIXED_AND_SEPARATE
+    );
+    if (mode < CallRecordingOutputMode.MIXED_AND_SEPARATE ||
+        mode > CallRecordingOutputMode.SEPARATE_ONLY) {
+      return CallRecordingOutputMode.MIXED_AND_SEPARATE;
+    }
+    return mode;
+  }
+
+  public void setCallRecordingOutputMode (@CallRecordingOutputMode int mode) {
+    if (mode < CallRecordingOutputMode.MIXED_AND_SEPARATE ||
+        mode > CallRecordingOutputMode.SEPARATE_ONLY) {
+      throw new IllegalArgumentException("mode == " + mode);
+    }
+    pmc.putInt(KEY_CALL_RECORDING_OUTPUT_MODE, mode);
   }
 
   public boolean useCustomVibrations () {

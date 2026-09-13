@@ -21,6 +21,7 @@ import tgx.bridge.PushManagerBridge.onNewToken
 @Suppress("MissingFirebaseInstanceTokenRefresh")
 class FirebaseListenerService : DefaultFirebaseMessagingService() {
   override fun onRegistered(installationId: String) {
+    tgx.bridge.PushManagerBridge.log("TGX-Push: FCM token refresh, length: %d", installationId.length)
     onNewToken(this, DeviceTokenFirebaseCloudMessaging(installationId, true))
   }
 }

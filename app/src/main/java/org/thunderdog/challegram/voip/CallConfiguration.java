@@ -19,12 +19,19 @@ import androidx.annotation.Nullable;
 
 import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.voip.annotation.DataSavingOption;
+import org.thunderdog.challegram.voip.annotation.CallRecordingOutputMode;
 
 import java.io.File;
 
 public class CallConfiguration {
   public final TdApi.CallStateReady state;
   public final boolean isOutgoing;
+  public final long callId;
+  public final long recordingUserId;
+  public final @NonNull String recordingDisplayName;
+  public final @Nullable String recordingBasePath;
+  public final boolean autoRecordingEnabled;
+  public final @CallRecordingOutputMode int recordingOutputMode;
 
   public final @NonNull String persistentStateFilePath;
   public final @Nullable String logFilePath;
@@ -48,6 +55,12 @@ public class CallConfiguration {
   public CallConfiguration (
     @NonNull TdApi.CallStateReady state,
     boolean isOutgoing,
+    long callId,
+    long recordingUserId,
+    @NonNull String recordingDisplayName,
+    @Nullable String recordingBasePath,
+    boolean autoRecordingEnabled,
+    @CallRecordingOutputMode int recordingOutputMode,
     @NonNull File persistentStateFile,
     @Nullable File logFile,
     @Nullable File statsLogFile,
@@ -78,6 +91,12 @@ public class CallConfiguration {
       this.state = state;
     }
     this.isOutgoing = isOutgoing;
+    this.callId = callId;
+    this.recordingUserId = recordingUserId;
+    this.recordingDisplayName = recordingDisplayName;
+    this.recordingBasePath = recordingBasePath;
+    this.autoRecordingEnabled = autoRecordingEnabled;
+    this.recordingOutputMode = recordingOutputMode;
 
     this.persistentStateFilePath = persistentStateFile.getAbsolutePath();
     this.logFilePath = logFile != null ? logFile.getAbsolutePath() : null;

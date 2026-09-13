@@ -14,15 +14,16 @@ abstract class DefaultFirebaseTokenRetriever : DeviceTokenRetriever("firebase") 
 
   override fun performInitialization(context: Context): Boolean {
     try {
-      PushManagerBridge.log("FirebaseApp is initializing...")
+      PushManagerBridge.log("TGX-Push: FirebaseApp initialization requested")
       if (FirebaseApp.initializeApp(context) != null) {
-        PushManagerBridge.log("FirebaseApp initialization finished successfully")
+        PushManagerBridge.log("TGX-Push: Firebase configuration available")
+        PushManagerBridge.log("TGX-Push: FirebaseApp initialized")
         return true
       } else {
-        PushManagerBridge.log("FirebaseApp initialization failed")
+        PushManagerBridge.log("TGX-Push: FirebaseApp initialization failed")
       }
     } catch (e: Throwable) {
-      PushManagerBridge.error("FirebaseApp initialization failed with error", e)
+      PushManagerBridge.error("TGX-Push: FirebaseApp initialization failed with error", e)
     }
     return false
   }

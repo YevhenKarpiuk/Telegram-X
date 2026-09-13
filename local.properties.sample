@@ -11,10 +11,13 @@ sdk.dir=
 keystore.file=
 
 ## Package name
-app.id=org.example.tgx
+app.id=ka.soft.tgxr
 
 ## Project name
-app.name=TGX Example
+app.name=Telegram X Recorder
+
+## Use the standard Firebase/FCM configuration.
+app.experimental=false
 
 ## Link to the app's website. If unavailable, link to the market page could be used.
 app.download_url=https://telegram.org/dlx

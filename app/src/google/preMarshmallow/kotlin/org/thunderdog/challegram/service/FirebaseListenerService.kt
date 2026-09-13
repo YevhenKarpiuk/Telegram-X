@@ -20,6 +20,7 @@ import tgx.bridge.PushManagerBridge.onNewToken
 
 class FirebaseListenerService : DefaultFirebaseMessagingService() {
   override fun onNewToken(newToken: String) {
+    tgx.bridge.PushManagerBridge.log("TGX-Push: FCM token refresh, length: %d", newToken.length)
     onNewToken(this, DeviceTokenFirebaseCloudMessaging(newToken, true))
   }
 }

@@ -14,6 +14,7 @@
  */
 package org.thunderdog.challegram.service;
 
+import android.Manifest;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -26,6 +27,8 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -80,6 +83,7 @@ import org.thunderdog.challegram.voip.VoIP;
 import org.thunderdog.challegram.voip.VoIPInstance;
 import org.thunderdog.challegram.voip.annotation.CallNetworkType;
 import org.thunderdog.challegram.voip.annotation.CallState;
+import org.thunderdog.challegram.voip.annotation.CallRecordingState;
 import org.thunderdog.challegram.voip.gui.CallSettings;
 import org.thunderdog.challegram.voip.gui.VoIPFeedbackActivity;
 
@@ -109,6 +113,8 @@ public class TGCallService extends Service implements
   private TdApi.User user;
 
   private boolean callInitialized;
+  private boolean incomingAnswerRequested;
+  private @CallForegroundStateMachine.State int foregroundState = CallForegroundStateMachine.State.NONE;
 
   @Override
   public int onStartCommand (Intent intent, int flags, int startId) {
@@ -154,6 +160,70 @@ public class TGCallService extends Service implements
 
   public long getCallDuration () {
     return tgcalls != null ? tgcalls.getCallDuration() : VoIPInstance.DURATION_UNKNOWN;
+  }
+
+  public interface CallRecordingListener {
+    void onCallRecordingStateChanged (
+      @CallRecordingState int state,
+      long elapsedSamples,
+      boolean autoRecordingEnabled
+    );
+  }
+
+  private @Nullable CallRecordingListener callRecordingListener;
+
+  public void setCallRecordingListener (@Nullable CallRecordingListener listener) {
+    this.callRecordingListener = listener;
+    if (listener != null && tgcalls != null) {
+      listener.onCallRecordingStateChanged(
+        tgcalls.getCallRecordingState(),
+        tgcalls.getCallRecordingElapsedSamples(),
+        tgcalls.isAutoCallRecordingEnabled()
+      );
+    }
+  }
+
+  public void removeCallRecordingListener (CallRecordingListener listener) {
+    if (callRecordingListener == listener) {
+      callRecordingListener = null;
+    }
+  }
+
+  public @CallRecordingState int getCallRecordingState () {
+    return tgcalls != null ? tgcalls.getCallRecordingState() : CallRecordingState.UNSUPPORTED;
+  }
+
+  public long getCallRecordingElapsedSamples () {
+    return tgcalls != null ? tgcalls.getCallRecordingElapsedSamples() : 0;
+  }
+
+  public boolean isAutoCallRecordingEnabled () {
+    return tgcalls != null ? tgcalls.isAutoCallRecordingEnabled() :
+      Settings.instance().isAutoRecordingCallsEnabled();
+  }
+
+  public void startCallRecording () {
+    if (tgcalls != null) {
+      tgcalls.startCallRecording(Settings.instance().getCallRecordingOutputMode());
+    }
+  }
+
+  public void pauseCallRecording () {
+    if (tgcalls != null) {
+      tgcalls.pauseCallRecording();
+    }
+  }
+
+  public void resumeCallRecording () {
+    if (tgcalls != null) {
+      tgcalls.resumeCallRecording();
+    }
+  }
+
+  public void stopCallRecording () {
+    if (tgcalls != null) {
+      tgcalls.stopCallRecording();
+    }
   }
 
   private void setCallId (Tdlib tdlib, int callId) {
@@ -403,6 +473,9 @@ public class TGCallService extends Service implements
 
   private void setCall (TdApi.Call call) {
     boolean sameCall = this.call != null && call != null && this.call.id == call.id;
+    if (!sameCall) {
+      incomingAnswerRequested = false;
+    }
     this.call = call;
     this.callChannelId = sameCall && this.callChannelId != null ? this.callChannelId : this.call != null ? "call_" + this.call.id + "_" + System.currentTimeMillis() : null;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -438,6 +511,29 @@ public class TGCallService extends Service implements
     setCallId(null, 0);
   }
 
+  @Override
+  public void onTimeout (int startId) {
+    handleShortServiceTimeout(startId);
+  }
+
+  @Override
+  public void onTimeout (int startId, int foregroundServiceType) {
+    if (foregroundServiceType == ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE) {
+      handleShortServiceTimeout(startId);
+    }
+  }
+
+  private void handleShortServiceTimeout (int startId) {
+    if (foregroundState != CallForegroundStateMachine.State.RINGING) {
+      return;
+    }
+    logForegroundTransition("SHORT_SERVICE_TIMEOUT", "NONE", foregroundState,
+      CallForegroundStateMachine.State.NONE);
+    declineIncomingCall();
+    setIsRinging(false);
+    stopSelf(startId);
+  }
+
   // Call state updates
 
   @Override
@@ -468,9 +564,9 @@ public class TGCallService extends Service implements
         startRatingActivity();
       }
     }
-    configureDeviceForCall();
     updateCurrentSound();
     showNotification();
+    configureDeviceForCall();
     updateStats();
     checkInitiated();
   }
@@ -647,6 +743,19 @@ public class TGCallService extends Service implements
     }
   }
 
+  public boolean prepareForIncomingCallAnswer () {
+    if (call == null || call.isOutgoing ||
+        call.state.getConstructor() != TdApi.CallStatePending.CONSTRUCTOR) {
+      logForegroundTransition("ANSWER_REJECTED_INVALID_STATE", "NONE", foregroundState, foregroundState);
+      return false;
+    }
+    boolean promoted = ensureActiveCallForeground("ANSWER", true);
+    if (promoted) {
+      incomingAnswerRequested = true;
+    }
+    return promoted;
+  }
+
   private void declineIncomingCall () {
     if (call != null) {
       tdlib.context().calls().hangUp(tdlib, call.id, false, 0);
@@ -674,8 +783,7 @@ public class TGCallService extends Service implements
       } else if (newState == UI.State.RESUMED) {
         needShowIncomingNotification = true;
         cleanupChannels((NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE));
-        U.stopForeground(this, true, TdlibNotificationManager.ID_FOREGROUND_INCOMING_CALL_NOTIFICATION);
-        incomingNotification = null;
+        stopRingingForeground("UI_RESUMED");
       }
     }
   }
@@ -691,7 +799,10 @@ public class TGCallService extends Service implements
   private void configureDeviceForCall () {
     AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
 
-    if (TD.isActive(call) && !isConfigured) {
+    boolean shouldConfigure = TD.isActive(call) &&
+      foregroundState == CallForegroundStateMachine.State.ACTIVE_MICROPHONE;
+
+    if (shouldConfigure && !isConfigured) {
       isConfigured = true;
 
       Log.i(Log.TAG_VOIP, "Configuring device for call...");
@@ -716,7 +827,7 @@ public class TGCallService extends Service implements
       } catch (Throwable t) {
         Log.e(Log.TAG_VOIP, "Error initializing proximity sensor", t);
       }
-    } else if (!TD.isActive(call) && isConfigured) {
+    } else if (!shouldConfigure && isConfigured) {
       isConfigured = false;
 
       Log.i(Log.TAG_VOIP, "Unconfiguring device from call...");
@@ -780,21 +891,34 @@ public class TGCallService extends Service implements
   private static final @DrawableRes int CALL_ICON_RES = R.drawable.baseline_phone_24_white;
 
   private void showNotification () {
-    boolean needNotification = call != null && (call.isOutgoing || call.state.getConstructor() == TdApi.CallStateExchangingKeys.CONSTRUCTOR || call.state.getConstructor() == TdApi.CallStateReady.CONSTRUCTOR) && !TD.isFinished(call);
-
-    if (needNotification == (ongoingCallNotification != null)) {
-      return;
-    }
+    boolean needNotification = call != null &&
+      (call.isOutgoing || incomingAnswerRequested ||
+        call.state.getConstructor() == TdApi.CallStateExchangingKeys.CONSTRUCTOR ||
+        call.state.getConstructor() == TdApi.CallStateReady.CONSTRUCTOR) &&
+      !TD.isFinished(call);
 
     if (!needNotification) {
-      cleanupChannels((NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE));
-      U.stopForeground(this, true, TdlibNotificationManager.ID_FOREGROUND_ONGOING_CALL_NOTIFICATION, TdlibNotificationManager.ID_FOREGROUND_INCOMING_CALL_NOTIFICATION);
-      incomingNotification = ongoingCallNotification = null;
+      if (foregroundState == CallForegroundStateMachine.State.ACTIVE_MICROPHONE) {
+        stopCallForeground("CALL_NOT_ACTIVE");
+      }
+      ongoingCallNotification = null;
       return;
     }
 
+    if (ongoingCallNotification != null) {
+      return;
+    }
 
+    if (call.isOutgoing) {
+      ensureActiveCallForeground("OUTGOING", false);
+    } else if (foregroundState != CallForegroundStateMachine.State.ACTIVE_MICROPHONE) {
+      logForegroundTransition("ACTIVE_NOTIFICATION_BLOCKED", "NONE", foregroundState, foregroundState);
+    } else {
+      ensureActiveCallForeground("ACTIVE_NOTIFICATION", false);
+    }
+  }
 
+  private Notification buildOngoingCallNotification () {
     Notification.Builder builder;
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -844,11 +968,183 @@ public class TGCallService extends Service implements
       builder.setLargeIcon(bitmap);
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-      ongoingCallNotification = builder.build();
+      return builder.build();
     } else {
-      ongoingCallNotification = builder.getNotification();
+      return builder.getNotification();
     }
-    U.startForeground(this, TdlibNotificationManager.ID_FOREGROUND_ONGOING_CALL_NOTIFICATION, ongoingCallNotification);
+  }
+
+  private boolean hasRecordAudioPermission () {
+    return Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+      checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+  }
+
+  private void startForegroundWithType (int notificationId, Notification notification, int foregroundServiceType) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      startForeground(notificationId, notification, foregroundServiceType);
+    } else {
+      startForeground(notificationId, notification);
+    }
+  }
+
+  private void logForegroundTransition (
+    String event,
+    String requested,
+    @CallForegroundStateMachine.State int previousState,
+    @CallForegroundStateMachine.State int newState
+  ) {
+    String callState = call != null && call.state != null ?
+      call.state.getClass().getSimpleName() : "NONE";
+    Log.i(Log.TAG_VOIP,
+      "TGX-Call-FGS: event=%s incoming=%b callState=%s ringing=%b appForeground=%b " +
+        "recordAudioGranted=%b requested=%s previous=%s new=%s sdk=%d",
+      event,
+      call != null && !call.isOutgoing,
+      callState,
+      isRinging,
+      UI.getUiState() == UI.State.RESUMED,
+      hasRecordAudioPermission(),
+      requested,
+      CallForegroundStateMachine.toString(previousState),
+      CallForegroundStateMachine.toString(newState),
+      Build.VERSION.SDK_INT
+    );
+  }
+
+  private boolean ensureRingingForeground (Notification notification) {
+    final int desiredState = CallForegroundStateMachine.decide(
+      foregroundState,
+      call != null && !call.isOutgoing,
+      isRinging,
+      false,
+      false,
+      hasRecordAudioPermission(),
+      TD.isFinished(call)
+    );
+    if (desiredState == CallForegroundStateMachine.State.ACTIVE_MICROPHONE) {
+      logForegroundTransition("RINGING_NO_DOWNGRADE", "NONE", foregroundState, foregroundState);
+      return false;
+    }
+    if (desiredState != CallForegroundStateMachine.State.RINGING) {
+      logForegroundTransition("RINGING_BLOCKED", "NONE", foregroundState, foregroundState);
+      return false;
+    }
+    if (foregroundState == CallForegroundStateMachine.State.RINGING) {
+      return true;
+    }
+
+    final int requestedType;
+    final String requestedTypeName;
+    int requestedTypeDecision = CallForegroundStateMachine.requestedTypeForState(
+      desiredState, Build.VERSION.SDK_INT);
+    if (requestedTypeDecision == CallForegroundStateMachine.RequestedType.SHORT_SERVICE) {
+      requestedType = ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE;
+      requestedTypeName = "SHORT_SERVICE";
+    } else {
+      requestedType = ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE;
+      requestedTypeName = "NONE";
+    }
+
+    final int previousState = foregroundState;
+    try {
+      startForegroundWithType(
+        TdlibNotificationManager.ID_FOREGROUND_INCOMING_CALL_NOTIFICATION,
+        notification,
+        requestedType
+      );
+      foregroundState = CallForegroundStateMachine.State.RINGING;
+      logForegroundTransition("INCOMING_RINGING", requestedTypeName, previousState, foregroundState);
+      return true;
+    } catch (RuntimeException e) {
+      Log.e(Log.TAG_VOIP, "TGX-Call-FGS: unable to start ringing foreground service", e);
+      logForegroundTransition("RINGING_PROMOTION_FAILED", requestedTypeName, previousState, foregroundState);
+      stopRinging();
+      stopSelf();
+      return false;
+    }
+  }
+
+  private boolean ensureActiveCallForeground (String event, boolean answerRequested) {
+    final boolean recordAudioGranted = hasRecordAudioPermission();
+    final boolean outgoingFromVisibleUi = call != null && call.isOutgoing &&
+      UI.getUiState() == UI.State.RESUMED;
+    final int desiredState = CallForegroundStateMachine.decide(
+      foregroundState,
+      call != null && !call.isOutgoing,
+      isRinging,
+      answerRequested,
+      outgoingFromVisibleUi,
+      recordAudioGranted,
+      TD.isFinished(call)
+    );
+    if (desiredState != CallForegroundStateMachine.State.ACTIVE_MICROPHONE) {
+      logForegroundTransition(event + "_BLOCKED", "MICROPHONE", foregroundState, foregroundState);
+      return false;
+    }
+    if (foregroundState == CallForegroundStateMachine.State.ACTIVE_MICROPHONE &&
+        ongoingCallNotification != null) {
+      return true;
+    }
+
+    Notification notification = buildOngoingCallNotification();
+    final int previousState = foregroundState;
+    int requestedTypeDecision = CallForegroundStateMachine.requestedTypeForState(
+      desiredState, Build.VERSION.SDK_INT);
+    final int requestedType = requestedTypeDecision == CallForegroundStateMachine.RequestedType.MICROPHONE ?
+      ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE : ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE;
+    final String requestedTypeName = requestedTypeDecision == CallForegroundStateMachine.RequestedType.MICROPHONE ?
+      "MICROPHONE" : "NONE";
+    try {
+      startForegroundWithType(
+        TdlibNotificationManager.ID_FOREGROUND_ONGOING_CALL_NOTIFICATION,
+        notification,
+        requestedType
+      );
+      foregroundState = CallForegroundStateMachine.State.ACTIVE_MICROPHONE;
+      ongoingCallNotification = notification;
+      NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+      if (manager != null) {
+        manager.cancel(TdlibNotificationManager.ID_FOREGROUND_INCOMING_CALL_NOTIFICATION);
+      }
+      incomingNotification = null;
+      logForegroundTransition(event, requestedTypeName, previousState, foregroundState);
+      return true;
+    } catch (RuntimeException e) {
+      Log.e(Log.TAG_VOIP, "TGX-Call-FGS: unable to promote call to microphone foreground service", e);
+      logForegroundTransition(event + "_PROMOTION_FAILED", requestedTypeName, previousState, foregroundState);
+      if (call != null && call.isOutgoing) {
+        hangUp();
+        stopCallForeground("OUTGOING_PROMOTION_FAILED");
+        stopSelf();
+      }
+      return false;
+    }
+  }
+
+  private void stopRingingForeground (String event) {
+    if (foregroundState == CallForegroundStateMachine.State.RINGING) {
+      final int previousState = foregroundState;
+      U.stopForeground(this, true, TdlibNotificationManager.ID_FOREGROUND_INCOMING_CALL_NOTIFICATION);
+      foregroundState = CallForegroundStateMachine.State.NONE;
+      incomingNotification = null;
+      logForegroundTransition(event, "NONE", previousState, foregroundState);
+    } else if (incomingNotification != null) {
+      NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+      if (manager != null) {
+        manager.cancel(TdlibNotificationManager.ID_FOREGROUND_INCOMING_CALL_NOTIFICATION);
+      }
+      incomingNotification = null;
+    }
+  }
+
+  private void stopCallForeground (String event) {
+    final int previousState = foregroundState;
+    U.stopForeground(this, true,
+      TdlibNotificationManager.ID_FOREGROUND_ONGOING_CALL_NOTIFICATION,
+      TdlibNotificationManager.ID_FOREGROUND_INCOMING_CALL_NOTIFICATION);
+    foregroundState = CallForegroundStateMachine.State.NONE;
+    incomingNotification = ongoingCallNotification = null;
+    logForegroundTransition(event, "NONE", previousState, foregroundState);
   }
 
   // Sound
@@ -947,7 +1243,16 @@ public class TGCallService extends Service implements
         answerTitle = new SpannableString(answerTitle);
         ((SpannableString) answerTitle).setSpan(new ForegroundColorSpan(Theme.getColor(ColorId.circleButtonPositive)), 0, answerTitle.length(), 0);
       }
-      builder.addAction(R.drawable.round_call_24_white, answerTitle, PendingIntent.getBroadcast(this, 0, answerIntent, PendingIntent.FLAG_ONE_SHOT | Intents.mutabilityFlags(false)));
+      PendingIntent answerPendingIntent;
+      if (hasRecordAudioPermission()) {
+        answerPendingIntent = PendingIntent.getBroadcast(this, 0, answerIntent,
+          PendingIntent.FLAG_ONE_SHOT | Intents.mutabilityFlags(false));
+      } else {
+        answerPendingIntent = PendingIntent.getActivity(this, 1, Intents.valueOfCall(),
+          PendingIntent.FLAG_ONE_SHOT | Intents.mutabilityFlags(false));
+        logForegroundTransition("ANSWER_REQUIRES_PERMISSION_UI", "NONE", foregroundState, foregroundState);
+      }
+      builder.addAction(R.drawable.round_call_24_white, answerTitle, answerPendingIntent);
       builder.setPriority(Notification.PRIORITY_MAX);
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
@@ -968,8 +1273,11 @@ public class TGCallService extends Service implements
     } else {
       incomingNotification = builder.getNotification();
     }
-    U.startForeground(this, TdlibNotificationManager.ID_FOREGROUND_INCOMING_CALL_NOTIFICATION, incomingNotification);
-    return true;
+    if (ensureRingingForeground(incomingNotification)) {
+      return true;
+    }
+    incomingNotification = null;
+    return false;
   }
 
   private void startRinging () {
@@ -1045,8 +1353,7 @@ public class TGCallService extends Service implements
 
   private void stopRinging () {
     cleanupChannels((NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE));
-    U.stopForeground(this, true, TdlibNotificationManager.ID_FOREGROUND_ONGOING_CALL_NOTIFICATION, TdlibNotificationManager.ID_FOREGROUND_INCOMING_CALL_NOTIFICATION);
-    incomingNotification = ongoingCallNotification = null;
+    stopRingingForeground("RINGING_STOPPED");
     if (ringtonePlayer != null) {
       ringtonePlayer.stop();
       ringtonePlayer.release();
@@ -1341,14 +1648,19 @@ public class TGCallService extends Service implements
       if (TD.isFinished(call)) {
         releaseTgCalls(tdlib, call);
         cleanupChannels((NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE));
-        U.stopForeground(this, true, TdlibNotificationManager.ID_FOREGROUND_ONGOING_CALL_NOTIFICATION, TdlibNotificationManager.ID_FOREGROUND_INCOMING_CALL_NOTIFICATION);
-        incomingNotification = ongoingCallNotification = null;
+        stopCallForeground("CALL_FINISHED");
         stopSelf();
       }
       return;
     }
 
     if (call == null || call.state.getConstructor() != TdApi.CallStateReady.CONSTRUCTOR || !callInitialized || tdlib == null) {
+      return;
+    }
+
+    if (foregroundState != CallForegroundStateMachine.State.ACTIVE_MICROPHONE ||
+        !hasRecordAudioPermission()) {
+      logForegroundTransition("TGCALLS_START_BLOCKED", "MICROPHONE", foregroundState, foregroundState);
       return;
     }
 
@@ -1383,6 +1695,25 @@ public class TGCallService extends Service implements
       @Override
       public void onSignalBarCountChanged (int newCount) {
         tdlib.dispatchCallBarsCount(call.id, newCount);
+      }
+
+      @Override
+      public void onCallRecordingStateChanged (
+        VoIPInstance context,
+        @CallRecordingState int state,
+        long elapsedSamples,
+        boolean autoRecordingEnabled
+      ) {
+        UI.post(() -> {
+          CallRecordingListener listener = callRecordingListener;
+          if (listener != null && TGCallService.this.tgcalls == context) {
+            listener.onCallRecordingStateChanged(
+              state,
+              elapsedSamples,
+              autoRecordingEnabled
+            );
+          }
+        });
       }
 
       @Override

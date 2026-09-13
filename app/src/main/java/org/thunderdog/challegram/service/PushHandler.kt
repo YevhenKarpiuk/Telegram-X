@@ -13,7 +13,7 @@ import tgx.td.stringify
 class PushHandler : PushManager {
   override fun onNewToken(service: Service, token: TdApi.DeviceToken) {
     UI.initApp(service.applicationContext)
-    log("onNewToken %s, sending to all accounts", token)
+    log("TGX-Push: refreshed token accepted; registration requested for all accounts")
     TdlibManager.instance().runWithWakeLock { manager ->
       manager.setDeviceToken(token)
     }

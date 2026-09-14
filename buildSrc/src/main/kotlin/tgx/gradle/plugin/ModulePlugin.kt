@@ -147,6 +147,7 @@ open class ModulePlugin : Plugin<Project> {
         }
 
         is ApplicationExtension -> {
+          val applicationConfig = requireNotNull(config)
           buildToolsVersion = build.buildToolsVersion
           ndkVersion = if (useLegacyNdk) {
             build.primaryNdkVersion
@@ -181,61 +182,58 @@ open class ModulePlugin : Plugin<Project> {
             targetSdk = build.targetSdkVersion
             multiDexEnabled = true
           }
-          keystore?.orNull?.let { keystore ->
+          val hasReleaseSigningConfig = keystore?.orNull?.let { keystore ->
             signingConfigs {
-              arrayOf(
-                getByName("debug"),
-                maybeCreate("release")
-              ).forEach { config ->
-                config.storeFile = keystore.file
-                config.storePassword = keystore.password
-                config.keyAlias = keystore.keyAlias
-                config.keyPassword = keystore.keyPassword
-                config.enableV2Signing = true
-                config.enableV3Signing = true
-                if (config.name == "debug") {
-                  config.enableV4Signing = true
-                }
+              maybeCreate("release").apply {
+                storeFile = keystore.file
+                storePassword = keystore.password
+                keyAlias = keystore.keyAlias
+                keyPassword = keystore.keyPassword
+                enableV2Signing = true
+                enableV3Signing = true
               }
             }
+            true
+          } ?: false
 
-            buildTypes {
-              getByName("debug") {
-                signingConfig = signingConfigs["debug"]
+          buildTypes {
+            getByName("debug") {
+              isDebuggable = true
+              isJniDebuggable = true
+              isMinifyEnabled = false
 
-                isDebuggable = true
-                isJniDebuggable = true
-                isMinifyEnabled = false
+              ndk.debugSymbolLevel = "full"
 
-                ndk.debugSymbolLevel = "full"
-
-                if (config.forceOptimize) {
-                  proguardFiles(
-                    getDefaultProguardFile(ProguardFiles.ProguardFile.OPTIMIZE.fileName),
-                    "proguard-rules.pro"
-                  )
-                  if (config.isHuaweiBuild) {
-                    proguardFile("proguard-hms.pro")
-                  }
-                }
-              }
-
-              getByName("release") {
-                signingConfig = signingConfigs["release"]
-
-                isMinifyEnabled = !config.doNotObfuscate
-                isShrinkResources = !config.doNotObfuscate
-
-                ndk.debugSymbolLevel = "full"
-
+              if (applicationConfig.forceOptimize) {
                 proguardFiles(
                   getDefaultProguardFile(ProguardFiles.ProguardFile.OPTIMIZE.fileName),
                   "proguard-rules.pro"
                 )
-
-                if (config.isHuaweiBuild) {
+                if (applicationConfig.isHuaweiBuild) {
                   proguardFile("proguard-hms.pro")
                 }
+              }
+            }
+
+            getByName("release") {
+              if (hasReleaseSigningConfig) {
+                signingConfig = signingConfigs["release"]
+              }
+
+              isDebuggable = false
+              isJniDebuggable = false
+              isMinifyEnabled = !applicationConfig.doNotObfuscate
+              isShrinkResources = !applicationConfig.doNotObfuscate
+
+              ndk.debugSymbolLevel = "full"
+
+              proguardFiles(
+                getDefaultProguardFile(ProguardFiles.ProguardFile.OPTIMIZE.fileName),
+                "proguard-rules.pro"
+              )
+
+              if (applicationConfig.isHuaweiBuild) {
+                proguardFile("proguard-hms.pro")
               }
             }
           }

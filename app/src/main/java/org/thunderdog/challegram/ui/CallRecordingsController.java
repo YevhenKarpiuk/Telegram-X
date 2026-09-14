@@ -95,6 +95,7 @@ public final class CallRecordingsController extends RecyclerViewController<Void>
   private String statusText (CallRecordingItem.Status status) {
     switch (status) {
       case FAILED: return Lang.getString(R.string.CallRecordingStatusFailed);
+      case INTERRUPTED: return Lang.getString(R.string.CallRecordingStatusInterrupted);
       case INCOMPLETE: return Lang.getString(R.string.CallRecordingStatusIncomplete);
       case IN_PROGRESS: return Lang.getString(R.string.CallRecordingStatusInProgress);
       default: return "";

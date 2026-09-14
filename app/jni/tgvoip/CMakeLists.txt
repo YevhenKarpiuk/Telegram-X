@@ -40,6 +40,7 @@ set(TGCALLS_LIB "tgcallsjni")
 
 add_library(${TGCALLS_LIB} SHARED
   CallRecorder.cpp
+  recorder/RecorderTgCallsAdapter.cpp
   tgvoip.cpp
 
   "${WEBRTC_DIR}/sdk/android/native_api/audio_device_module/audio_device_android.cc"

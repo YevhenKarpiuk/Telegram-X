@@ -2234,6 +2234,7 @@
   <string name="CallRecordingStatusCompleted">Completed</string>
   <string name="CallRecordingStatusFailed">Failed</string>
   <string name="CallRecordingStatusIncomplete">Incomplete</string>
+  <string name="CallRecordingStatusInterrupted">Interrupted</string>
   <string name="CallRecordingStatusInProgress">Recording in progress</string>
   <string name="CallRecordingEmpty">No call recordings</string>
   <string name="CallRecordingDurationValue">Duration: %1$s</string>

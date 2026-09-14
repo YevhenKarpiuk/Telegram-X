@@ -325,6 +325,11 @@ android {
 
     buildConfigString("TGX_EXTENSION", config.extension)
 
+    // Recorder release identity is independent from Telegram X's update-sensitive
+    // Android versionCode/versionName scheme.
+    buildConfigInt("TGXR_RELEASE_VERSION", 1)
+    buildConfigString("TGXR_RELEASE_NAME", "1.0")
+
     buildConfigString("JNI_VERSION", config.nativeLibraryVersion)
     buildConfigString("LEVELDB_VERSION", config.leveldbVersion)
 

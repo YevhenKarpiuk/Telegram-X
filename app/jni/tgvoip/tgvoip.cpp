@@ -16,6 +16,7 @@
 #include <jni_utils.h>
 #include "bridge.h"
 #include "CallRecorder.h"
+#include "recorder/RecorderTgCallsAdapter.h"
 
 #include <android/log.h>
 
@@ -26,8 +27,6 @@
 #include <modules/utility/include/jvm_android.h>
 #include <sdk/android/native_api/video/wrapper.h>
 #include <sdk/android/native_api/base/init.h>
-#include <sdk/android/native_api/audio_device_module/audio_device_android.h>
-#include <modules/audio_device/include/audio_device_data_observer.h>
 #include <rtc_base/ssl_adapter.h>
 #include <webrtc/media/base/media_constants.h>
 
@@ -523,7 +522,13 @@ JNI_OBJECT_FUNC(jlong, voip_TgCallsController, newInstance,
       configuration.getBoolean("autoRecordingEnabled") == JNI_TRUE;
   const auto initialRecordingOutputMode = toRecordingOutputMode(
       configuration.getInt("recordingOutputMode"));
-  const bool recordingSupported = supportsCallRecording(version);
+  const auto recorderHookCapabilities =
+      tgx::call_recording::CurrentRecorderHookCapabilities();
+  const auto recorderIntegrationSupport =
+      tgx::call_recording::EvaluateRecorderIntegrationSupport(
+          supportsCallRecording(version), recorderHookCapabilities);
+  const bool recordingSupported = recorderIntegrationSupport ==
+      tgx::call_recording::RecorderIntegrationSupport::Supported;
   __android_log_print(
       ANDROID_LOG_INFO,
       kCallRecorderLogTag,
@@ -661,20 +666,24 @@ JNI_OBJECT_FUNC(jlong, voip_TgCallsController, newInstance,
           [javaController](
               tgx::call_recording::RecordingState state,
               int64_t elapsedSamples,
-              bool autoEnabled) {
+              bool autoEnabled,
+              const std::string &sessionId) {
             javaController->runSafely(
-                [javaController, state, elapsedSamples, autoEnabled](
+                [javaController, state, elapsedSamples, autoEnabled, sessionId](
                     JNIEnv *env) {
                   jmethodID methodId = env->GetMethodID(
                       tgcalls::javaTgCallsController,
                       "handleCallRecordingStateChanged",
-                      "(IJZ)V");
+                      "(IJZLjava/lang/String;)V");
+                  jstring javaSessionId = env->NewStringUTF(sessionId.c_str());
                   env->CallVoidMethod(
                       javaController->thiz,
                       methodId,
                       static_cast<jint>(state),
                       static_cast<jlong>(elapsedSamples),
-                      autoEnabled ? JNI_TRUE : JNI_FALSE);
+                      autoEnabled ? JNI_TRUE : JNI_FALSE,
+                      javaSessionId);
+                  env->DeleteLocalRef(javaSessionId);
                 });
           });
 
@@ -756,31 +765,8 @@ JNI_OBJECT_FUNC(jlong, voip_TgCallsController, newInstance,
   };
 
   if (recordingSupported && recordingController != nullptr) {
-    descriptor.createAudioDeviceModule = [recordingController](webrtc::TaskQueueFactory *) {
-      auto audioDevice = webrtc::CreateAndroidAudioDeviceModule(
-          webrtc::AudioDeviceModule::kPlatformDefaultAudio);
-      if (audioDevice == nullptr) {
-        return audioDevice;
-      }
-      try {
-        auto observer = tgx::call_recording::CreateAudioDeviceObserver(
-            recordingController);
-        if (observer == nullptr) {
-          return audioDevice;
-        }
-        auto observedAudioDevice = webrtc::CreateAudioDeviceWithDataObserver(
-            audioDevice,
-            std::move(observer));
-        return observedAudioDevice != nullptr ? observedAudioDevice : audioDevice;
-      } catch (...) {
-        return audioDevice;
-      }
-    };
-    descriptor.createAudioFrameProcessor = [recordingController](
-        std::unique_ptr<webrtc::AudioFrameProcessor> existingProcessor) {
-      return tgx::call_recording::CreateAudioFrameProcessor(
-          recordingController, std::move(existingProcessor));
-    };
+    tgx::call_recording::ConfigureRecorderTgCallsHooks(
+        descriptor, recordingController);
   }
 
   // tgcalls::Proxy

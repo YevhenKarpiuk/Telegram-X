@@ -3,16 +3,21 @@
 ## Scope and verified revision
 
 This document describes the audio path actually present in Telegram X at
-revision `67501370426d` (version 1808), with tgcalls at
-`332e581d6349c22460090ddf4b0aa19985b63330` and WebRTC at
+revision `67501370426d` (version 1808), with production recorder hooks at
+tgcalls `60d59eadb793a63830fc3bd58682926486692996` (upstream base
+`332e581d6349c22460090ddf4b0aa19985b63330`) and WebRTC at
 `6ecff4f2446ff7d4ce38ca1c764f023e44dbcb1b`.
 
 The implementation covered here captures separate local and remote PCM hooks
 for ordinary 1:1 Telegram audio calls and encodes each copy to a standard Ogg
 Opus file on the recorder worker. The current status is M5 recorder control,
-M5.1 UI metadata, M6 recordings browser/playback, and M7 share/save/delete for
-`InstanceV2Impl` versions 7, 8, 9, 12, and 13. Group calls, stereo split, and
-transcoded export formats remain explicitly out of scope.
+M5.1 UI metadata, M6 recordings browser/playback, M7 share/save/delete, and M8
+crash recovery and M11 upgrade-resilient hook isolation for `InstanceV2Impl`
+versions 7, 8, 9, 12, and 13. Group calls,
+stereo split, and
+transcoded export formats remain explicitly out of scope. The M11 integration
+contract and future upgrade procedure are documented in
+`docs/TGCALLS_RECORDER_UPGRADE.md`.
 
 The design is intentionally session/stream based so that adding group calls
 does not require replacing a two-global-stream recorder.
@@ -128,8 +133,9 @@ Concrete locations:
   - `performDestroy()` calls native `destroyInstance()`.
 - `app/jni/tgvoip/tgvoip.cpp`
   - JNI function `voip_TgCallsController_newInstance` translates Java state to
-    `tgcalls::Descriptor`, invokes `tgcalls::Meta::Create()`, and stores the
-    result in `TgCallsContext`.
+    `tgcalls::Descriptor`, delegates recorder hook installation to
+    `recorder/RecorderTgCallsAdapter`, invokes `tgcalls::Meta::Create()`, and
+    stores the result in `TgCallsContext`.
   - JNI function `voip_TgCallsController_destroyInstance` calls
     `Instance::stop()` and deletes `TgCallsContext` only from its completion.
 - `app/jni/tgvoip/third_party/tgcalls/tgcalls/Instance.cpp`
@@ -281,7 +287,7 @@ For the current Opus 1:1 configuration the selected hook sees:
 | Property | Value |
 | --- | --- |
 | file | `webrtc/api/audio/audio_frame_processor.h` (API), integration in the three tgcalls media constructors |
-| class/method | future `RecordingAudioFrameProcessor::Process()` implementing `webrtc::AudioFrameProcessor` |
+| class/method | `recorder/RecorderTgCallsAdapter.cpp`, `RecordingAudioFrameProcessor::Process()` implementing `webrtc::AudioFrameProcessor` |
 | callback position | after `ProcessCaptureFrame()`, before `AudioSendStream::SendAudioData()` and Opus |
 | sample rate | 48,000 Hz (Opus encoder's `SampleRateHz`) |
 | channels | 1 (Opus defaults to mono because no `stereo=1` parameter is negotiated) |
@@ -542,13 +548,16 @@ failure paths may converge.
 The minimal 1:1 implementation set is:
 
 - `app/jni/tgvoip/CallRecorder.h` and `CallRecorder.cpp` (new)
-  - `RecordingSession`, `AudioStream`, bounded rings, writer, the ADM data
-    observer, and identity `RecordingAudioFrameProcessor`.
+  - `RecordingSession`, `AudioStream`, bounded rings, worker, timeline,
+    normalization, and Ogg/Opus writers.
+- `app/jni/tgvoip/recorder/RecorderTgCallsAdapter.h` and
+  `RecorderTgCallsAdapter.cpp`
+  - isolate the generic tgcalls Descriptor factories, ADM render observer,
+    identity `RecordingAudioFrameProcessor`, capability reporting, PCM format
+    guards, and compile-time API assertions.
 - `app/jni/tgvoip/tgvoip.cpp`
   - own the session in `TgCallsContext`;
-  - provide the wrapped Android ADM through
-    `Descriptor.createAudioDeviceModule`;
-  - provide the identity frame processor factory;
+  - ask the recorder adapter to configure the two Descriptor factories;
   - bind start/stop to tgcalls state and stop completion.
 - `app/jni/tgvoip/CMakeLists.txt`
   - compile the recorder source into `tgcallsjni` and link the existing `opus`
@@ -1252,7 +1261,7 @@ After implementation, prove the encoded output before adding UI:
 
 ## Milestone 6 — metadata, browser, and playback
 
-### Immutable call snapshot and schema v1
+### Immutable call snapshot and schema v1/v2
 
 `VoIP.instantiateAndConnect()` snapshots only the peer fields required by the
 recordings UI: `callId`, `userId`, the current display name, and call
@@ -1261,13 +1270,14 @@ part of recorder construction. Native code never queries TDLib and no phone,
 username, biography, avatar, contact list, authorization data, or API
 credentials are persisted.
 
-New `info.json` files begin with `schemaVersion: 1`. Their `sessionId` is the
+Finalized files created since M8 begin with `schemaVersion: 2`; schema v1 and
+missing-schema recordings remain readable. Their `sessionId` is the
 session directory basename; the display name is never part of the internal
 path. The canonical UI fields are:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "sessionId": "2026-09-12_16-48-01_1",
   "call": {
     "callId": 1,
@@ -1311,12 +1321,16 @@ times, duration, output mode, actual track availability/sizes, status, and
 pause/stopped intervals. Missing `schemaVersion` is accepted for v6/v7/v7.1.
 Legacy fallback uses the directory basename, unknown peer/direction, then
 `startTime`, directory time, and filesystem time. A missing or malformed
-`info.json` still produces an `INCOMPLETE` row and any real non-empty Opus file
-remains playable/exportable.
+`info.json` still produces an `INCOMPLETE` row (or `INTERRUPTED` when an
+unfinalized marker remains), and any safe regular Opus file of at least 64
+bytes remains playable/exportable.
 
 Status is derived as follows:
 
-- `IN_PROGRESS`: `.in_progress` belongs to the current process;
+- `IN_PROGRESS`: the exact directory sessionId is registered by the live
+  native session in the process-local registry;
+- `INTERRUPTED`: an unfinalized marker/checkpoint exists without that exact
+  process-local registration;
 - `FAILED`: the final control state is fatal or the timeline reports an
   internal failure;
 - `COMPLETED`: metadata is finalized and all outputs required by its mode
@@ -1402,4 +1416,95 @@ cover JSON escaping and monotonic recording-end conversion.
 These deterministic tests do not replace device validation. The browser UI,
 Android codec support, audio focus, Sharesheet recipient grants, SAF providers,
 and physical deletion behavior must still be exercised on the target ARM64
-device with both new schema-v1 and old v7.1 recordings.
+device with both new schema-v2 and old schema-v1/v7.1 recordings.
+
+## Milestone 8 — crash recovery
+
+### Write and recovery sequence
+
+The exact normal sequence is now:
+
+```text
+first Start
+  -> immutable sessionId and process-local registration
+  -> files/calls/<sessionId>/ and .in_progress on the recorder worker
+  -> schema-v2 recovery checkpoint through info.json.tmp + atomic rename
+  -> lazy Opus writer creation on first committed PCM
+  -> completed Ogg pages and metadata checkpoints every 5 seconds
+     and after Start/Pause/Resume/Stop
+  -> call finish freezes the existing Stop boundary or teardown boundary
+  -> PCM queues drain, pending Opus packet receives EOS, writers close
+  -> full schema-v2 info.json.tmp is flushed, fsynced and renamed
+  -> .in_progress is removed only after that final metadata commit succeeds
+  -> Java receives FINALIZED and unregisters the sessionId
+```
+
+All metadata and Ogg flushing occurs on the existing recorder worker. Audio
+callbacks still only copy into the bounded SPSC rings. A checkpoint contains
+the immutable directory identity, call snapshot, recording start, output mode,
+48 kHz timeline rate, last committed timeline sample, committed duration,
+control state, and checkpoint wall/monotonic timestamps. A stopped session is
+advanced only to its saved Stop boundary, so checkpoints cannot add later call
+time. Recovery never uses the next application launch time.
+
+`AtomicWriteFile` writes `info.json.tmp`, checks `fwrite`, `fflush`, and
+`fsync(fileno)`, closes it, then uses same-directory POSIX `rename` to replace
+`info.json`. It performs a best-effort directory `fsync`; failure of directory
+fsync is not treated as recorder failure because Android filesystems may reject
+it after the atomic rename. A write/rename failure leaves the previous canonical
+JSON intact and retains `.in_progress` at finalization.
+
+The native recorder worker is the only owner allowed to rename
+`info.json.tmp` to `info.json`. The repository is read-only with respect to
+metadata. At scan time a valid canonical `info.json` always wins over a stale
+temp file or marker. If canonical metadata is absent or malformed, a valid
+`info.json.tmp` may be read as recovery metadata but is never renamed, moved,
+deleted, or used to overwrite the canonical file. Corrupt temp/canonical
+metadata is isolated to its directory. The directory basename, never metadata
+content, is the immutable session identity.
+Track names are fixed constants and symlinks/path escapes are rejected. Scan
+does no decode and never derives duration from file size; it uses `durationMs`,
+then checkpointed timeline samples, then canonical metadata times.
+
+### Partial Ogg behavior
+
+`OggOpusWriter` retains the newest packet so a clean finish can mark it EOS.
+During a checkpoint it calls `ogg_stream_flush` for all earlier submitted
+packets and `fflush` on each open track. Already committed Ogg pages survive an
+unclean process death, but the uncommitted tail does not. Mixing intentionally
+keeps an approximately 500 ms master-timeline holdback; expected normal tail
+loss is therefore roughly that 500 ms, plus up to one pending 20 ms Opus packet
+and a small queue/storage scheduling margin. This is an intentional tradeoff of
+the current synchronization design, not a strict hard upper bound: OS and
+storage buffering can make loss somewhat larger. No media file is reopened,
+rewritten, appended after restart, or transcoded.
+
+The bundled Media3 Ogg implementation explicitly accepts end-of-input without
+an EOS page (`OggPacket.populate` returns false and `StreamReader` ends input),
+and `DefaultOggSeeker.readGranuleOfLastPage` explicitly ignores a partial final
+page and returns the last complete page granule. This is direct source-level
+evidence that previously committed pages are usable without repair. A target
+device playback test is still required before declaring runtime recovery PASS;
+M8 therefore adds no Ogg repair or FFmpeg dependency.
+
+### Failure and shutdown boundaries
+
+Encoder and Ogg output errors retain the existing isolation policy: recording
+becomes FAILED only when no useful enabled audio output remains. Metadata
+checkpoint errors, including `ENOSPC`, `fflush`, `fsync`, or `rename` failure,
+are auxiliary and non-fatal while audio outputs remain healthy. They are
+diagnosed with throttled worker logging and retried at the next normal
+five-second or control-transition checkpoint, without a busy loop. A final
+metadata failure retains `.in_progress`, any temp/canonical recovery evidence,
+and every surviving media file; it never blocks call teardown. The repository
+exposes surviving fixed tracks for playback/export even when status is FAILED,
+INCOMPLETE, or INTERRUPTED.
+
+`finish()` still contains `worker_.join()`. Under ordinary operation the worker
+poll interval is at most 10 ms, but encoder and filesystem calls (`fopen`,
+`fwrite`, `fflush`, `fsync`, `rename`, `fclose`) can block in the kernel without
+a portable deadline. Detaching is unsafe because the worker owns references to
+the session, timeline, encoders, and files; timed destruction would introduce a
+use-after-free. A genuinely bounded teardown requires a larger ownership and
+asynchronous completion redesign and is deferred. M8 preserves the safe join
+and documents this residual device/filesystem-hang risk.

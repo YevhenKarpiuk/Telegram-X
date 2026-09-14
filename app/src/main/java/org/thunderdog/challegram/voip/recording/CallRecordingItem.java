@@ -12,7 +12,7 @@ import java.util.Collections;
 import java.util.List;
 
 public final class CallRecordingItem {
-  public enum Status { COMPLETED, FAILED, INCOMPLETE, IN_PROGRESS }
+  public enum Status { COMPLETED, FAILED, INTERRUPTED, INCOMPLETE, IN_PROGRESS }
 
   public static final class ControlInterval {
     public final long startSample;

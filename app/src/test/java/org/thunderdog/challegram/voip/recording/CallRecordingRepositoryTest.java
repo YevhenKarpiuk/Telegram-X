@@ -5,6 +5,7 @@
 package org.thunderdog.challegram.voip.recording;
 
 import org.junit.Before;
+import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -47,9 +48,15 @@ public class CallRecordingRepositoryTest {
 
   @Before
   public void setUp () throws IOException {
+    CallRecordingActiveSessions.clearForTests();
     callsRoot = temporary.newFolder("calls");
     exportRoot = new File(temporary.getRoot(), "exports");
     repository = new CallRecordingRepository(callsRoot, exportRoot, TEST_PID);
+  }
+
+  @After
+  public void tearDown () {
+    CallRecordingActiveSessions.clearForTests();
   }
 
   @Test
@@ -101,9 +108,9 @@ public class CallRecordingRepositoryTest {
 
     List<CallRecordingItem> items = repository.scanNow();
     assertEquals(8, items.size());
-    assertEquals("schema-id", items.get(0).sessionId);
+    assertEquals(valid.getName(), items.get(0).sessionId);
 
-    CallRecordingItem schema = find(items, "schema-id");
+    CallRecordingItem schema = findByDirectory(items, valid.getName());
     assertEquals(1, schema.schemaVersion);
     assertEquals(48000, schema.timelineSampleRate);
     assertEquals(123456789L, schema.userId);
@@ -131,11 +138,11 @@ public class CallRecordingRepositoryTest {
     assertEquals(CallRecordingItem.Status.INCOMPLETE,
       findByDirectory(items, malformed.getName()).status);
     assertEquals(CallRecordingItem.Status.INCOMPLETE,
-      find(items, "missing-output").status);
+      findByDirectory(items, missingOutput.getName()).status);
     assertEquals(CallRecordingItem.Status.INCOMPLETE,
-      find(items, "writer-failed").status);
-    assertEquals(CallRecordingItem.Status.FAILED, find(items, "fatal").status);
-    CallRecordingItem actual = find(items, "actual-wins");
+      findByDirectory(items, writerFailed.getName()).status);
+    assertEquals(CallRecordingItem.Status.FAILED, findByDirectory(items, fatal.getName()).status);
+    CallRecordingItem actual = findByDirectory(items, actualWins.getName());
     assertFalse(actual.hasMixed);
     assertTrue(actual.hasRemote);
 
@@ -153,7 +160,7 @@ public class CallRecordingRepositoryTest {
   public void scansOneThousandRecordingsWithoutReadingAudio () throws Exception {
     for (int i = 0; i < 1000; i++) {
       File directory = session(String.format("2026-01-01_00-00-%02d_%04d", i % 60, i));
-      write(new File(directory, "mixed.opus"), "x");
+      tracks(directory, "mixed.opus");
     }
     List<CallRecordingItem> items = repository.scanNow();
     assertEquals(1000, items.size());
@@ -341,6 +348,7 @@ public class CallRecordingRepositoryTest {
     File activeDirectory = session("active");
     tracks(activeDirectory, "mixed.opus");
     write(new File(activeDirectory, ".in_progress"), Integer.toString(TEST_PID));
+    CallRecordingActiveSessions.update("active", org.thunderdog.challegram.voip.annotation.CallRecordingState.RECORDING);
     CallRecordingItem active = findByDirectory(repository.scanNow(), "active");
     assertEquals(CallRecordingItem.Status.IN_PROGRESS, active.status);
     assertThrows(IOException.class, () -> repository.deleteNow(active));
@@ -356,6 +364,208 @@ public class CallRecordingRepositoryTest {
     assertTrue(partialDirectory.exists());
     assertTrue(new File(outside, "secret").isFile());
     Files.deleteIfExists(link.toPath());
+  }
+
+  @Test
+  public void staleMarkerIsInterruptedNotActive () throws Exception {
+    File directory = session("stale-marker");
+    tracks(directory, "mixed.opus");
+    write(new File(directory, ".in_progress"), Integer.toString(TEST_PID));
+
+    CallRecordingItem item = find(repository.scanNow(), "stale-marker");
+    assertEquals(CallRecordingItem.Status.INTERRUPTED, item.status);
+    assertFalse(item.isActive());
+  }
+
+  @Test
+  public void exactProcessLocalSessionIsActiveWithoutTrustingPid () throws Exception {
+    File active = session("registered-active");
+    tracks(active, "mixed.opus");
+    File stale = session("same-pid-stale");
+    tracks(stale, "mixed.opus");
+    write(new File(stale, ".in_progress"), Integer.toString(TEST_PID));
+    CallRecordingActiveSessions.update("registered-active",
+      org.thunderdog.challegram.voip.annotation.CallRecordingState.PAUSED);
+
+    List<CallRecordingItem> items = repository.scanNow();
+    assertEquals(CallRecordingItem.Status.IN_PROGRESS,
+      find(items, "registered-active").status);
+    assertEquals(CallRecordingItem.Status.INTERRUPTED,
+      find(items, "same-pid-stale").status);
+  }
+
+  @Test
+  public void validCanonicalInfoWinsOverStaleMarkerAndTemp () throws Exception {
+    File directory = session("canonical-wins");
+    tracks(directory, "mixed.opus");
+    write(new File(directory, "info.json"), metadata(true, "untrusted-id",
+      "2026-09-12T10:00:00.000Z", "mixed_only", "finalized",
+      false, false, "[]"));
+    String temporaryMetadata = checkpointMetadata("canonical-wins", 96000);
+    write(new File(directory, "info.json.tmp"), temporaryMetadata);
+    write(new File(directory, ".in_progress"), "old");
+
+    CallRecordingItem item = find(repository.scanNow(), "canonical-wins");
+    assertEquals("canonical-wins", item.sessionId);
+    assertEquals(1, item.schemaVersion);
+    assertEquals(CallRecordingItem.Status.COMPLETED, item.status);
+    assertTrue(new File(directory, "info.json.tmp").isFile());
+    assertEquals(temporaryMetadata,
+      new String(Files.readAllBytes(new File(directory, "info.json.tmp").toPath()),
+        StandardCharsets.UTF_8));
+  }
+
+  @Test
+  public void validTempIsReadWithoutFilesystemMutation () throws Exception {
+    File directory = session("promote-temp");
+    tracks(directory, "mixed.opus");
+    write(new File(directory, "info.json.tmp"), checkpointMetadata("promote-temp", 96000));
+
+    CallRecordingItem item = find(repository.scanNow(), "promote-temp");
+    assertEquals(2, item.schemaVersion);
+    assertEquals(2000, item.durationMs);
+    assertEquals(CallRecordingItem.Status.INTERRUPTED, item.status);
+    assertTrue(new File(directory, "info.json.tmp").isFile());
+    assertFalse(new File(directory, "info.json").exists());
+  }
+
+  @Test
+  public void activeTmpBecomesInterruptedAfterExactSessionUnregister () throws Exception {
+    File directory = session("active-tmp");
+    tracks(directory, "mixed.opus");
+    String checkpoint = checkpointMetadata("active-tmp", 96000);
+    write(new File(directory, "info.json.tmp"), checkpoint);
+    write(new File(directory, ".in_progress"), Integer.toString(TEST_PID));
+    CallRecordingActiveSessions.update("active-tmp",
+      org.thunderdog.challegram.voip.annotation.CallRecordingState.RECORDING);
+
+    CallRecordingItem active = find(repository.scanNow(), "active-tmp");
+    assertEquals(CallRecordingItem.Status.IN_PROGRESS, active.status);
+    assertEquals(2000, active.durationMs);
+    assertTrue(new File(directory, "info.json.tmp").isFile());
+    assertFalse(new File(directory, "info.json").exists());
+
+    CallRecordingActiveSessions.update("active-tmp",
+      org.thunderdog.challegram.voip.annotation.CallRecordingState.FINALIZED);
+    CallRecordingItem interrupted = find(repository.scanNow(), "active-tmp");
+    assertEquals(CallRecordingItem.Status.INTERRUPTED, interrupted.status);
+    assertTrue(new File(directory, "info.json.tmp").isFile());
+    assertFalse(new File(directory, "info.json").exists());
+  }
+
+  @Test
+  public void malformedCanonicalFallsBackToValidTempWithoutMutation () throws Exception {
+    File directory = session("malformed-canonical-valid-temp");
+    tracks(directory, "mixed.opus");
+    String malformed = "{broken-canonical";
+    String checkpoint = checkpointMetadata(directory.getName(), 144000);
+    write(new File(directory, "info.json"), malformed);
+    write(new File(directory, "info.json.tmp"), checkpoint);
+    write(new File(directory, ".in_progress"), "stale");
+
+    CallRecordingItem item = find(repository.scanNow(), directory.getName());
+    assertEquals(2, item.schemaVersion);
+    assertEquals(3000, item.durationMs);
+    assertEquals(CallRecordingItem.Status.INTERRUPTED, item.status);
+    assertEquals(malformed,
+      new String(Files.readAllBytes(new File(directory, "info.json").toPath()),
+        StandardCharsets.UTF_8));
+    assertEquals(checkpoint,
+      new String(Files.readAllBytes(new File(directory, "info.json.tmp").toPath()),
+        StandardCharsets.UTF_8));
+  }
+
+  @Test
+  public void activeRegistryRemovesExactSessionForTerminalStates () {
+    CallRecordingActiveSessions.update("terminal-session",
+      org.thunderdog.challegram.voip.annotation.CallRecordingState.RECORDING);
+    assertTrue(CallRecordingActiveSessions.isActive("terminal-session"));
+    CallRecordingActiveSessions.update("terminal-session",
+      org.thunderdog.challegram.voip.annotation.CallRecordingState.FAILED);
+    assertFalse(CallRecordingActiveSessions.isActive("terminal-session"));
+
+    CallRecordingActiveSessions.update("terminal-session",
+      org.thunderdog.challegram.voip.annotation.CallRecordingState.INACTIVE);
+    assertTrue(CallRecordingActiveSessions.isActive("terminal-session"));
+    CallRecordingActiveSessions.update("terminal-session",
+      org.thunderdog.challegram.voip.annotation.CallRecordingState.FINALIZED);
+    assertFalse(CallRecordingActiveSessions.isActive("terminal-session"));
+    CallRecordingActiveSessions.update("",
+      org.thunderdog.challegram.voip.annotation.CallRecordingState.RECORDING);
+    assertFalse(CallRecordingActiveSessions.isActive(""));
+  }
+
+  @Test
+  public void corruptTempIsIsolatedAndDoesNotHideSibling () throws Exception {
+    File broken = session("corrupt-temp");
+    tracks(broken, "mixed.opus");
+    write(new File(broken, "info.json.tmp"), "{not-json");
+    File healthy = session("healthy-sibling");
+    tracks(healthy, "mixed.opus");
+    write(new File(healthy, "info.json"), metadata(true, "ignored",
+      "2026-09-12T10:00:00.000Z", "mixed_only", "finalized",
+      false, false, "[]"));
+
+    List<CallRecordingItem> items = repository.scanNow();
+    assertEquals(CallRecordingItem.Status.INCOMPLETE, find(items, "corrupt-temp").status);
+    assertEquals(CallRecordingItem.Status.COMPLETED, find(items, "healthy-sibling").status);
+    assertFalse(new File(broken, "info.json").exists());
+  }
+
+  @Test
+  public void schemaTwoCheckpointUsesCommittedDuration () throws Exception {
+    File directory = session("checkpoint-v2");
+    tracks(directory, "mixed.opus");
+    write(new File(directory, "info.json"), checkpointMetadata("checkpoint-v2", 144000)
+      .replace("\"durationMs\":3000,", ""));
+
+    CallRecordingItem item = find(repository.scanNow(), "checkpoint-v2");
+    assertEquals(2, item.schemaVersion);
+    assertEquals(3000, item.durationMs);
+    assertEquals(48000, item.timelineSampleRate);
+    assertEquals(CallRecordingItem.Status.INTERRUPTED, item.status);
+  }
+
+  @Test
+  public void interruptedMixedTrackCanBeExportedAndDeleted () throws Exception {
+    File directory = session("interrupted-actions");
+    tracks(directory, "mixed.opus");
+    write(new File(directory, "info.json"), checkpointMetadata("interrupted-actions", 48000));
+    write(new File(directory, ".in_progress"), "stale");
+    CallRecordingItem item = find(repository.scanNow(), "interrupted-actions");
+
+    assertTrackExport(item, CallRecordingRepository.ExportVariant.MIXED, "mixed.opus");
+    assertTrue(repository.deleteNow(item));
+    assertFalse(directory.exists());
+  }
+
+  @Test
+  public void interruptedSeparateTracksSurviveIndependently () throws Exception {
+    File directory = session("interrupted-separate");
+    tracks(directory, "local.opus", "remote.opus");
+    write(new File(directory, "info.json"), checkpointMetadata("interrupted-separate", 48000)
+      .replace("mixed_and_separate", "separate_only"));
+    CallRecordingItem item = find(repository.scanNow(), "interrupted-separate");
+
+    assertFalse(item.hasMixed);
+    assertTrue(item.hasLocal);
+    assertTrue(item.hasRemote);
+    assertTrackExport(item, CallRecordingRepository.ExportVariant.LOCAL, "local.opus");
+    assertTrackExport(item, CallRecordingRepository.ExportVariant.REMOTE, "remote.opus");
+  }
+
+  @Test
+  public void symlinkAndTinyTracksAreNotPlayable () throws Exception {
+    File outside = temporary.newFile("outside.opus");
+    tracks(outside.getParentFile(), outside.getName());
+    File symlinkSession = session("symlink-track");
+    Files.createSymbolicLink(new File(symlinkSession, "mixed.opus").toPath(), outside.toPath());
+    File tinySession = session("tiny-track");
+    write(new File(tinySession, "mixed.opus"), "tiny");
+
+    List<CallRecordingItem> items = repository.scanNow();
+    assertEquals(1, items.size());
+    assertFalse(find(items, "tiny-track").hasMixed);
   }
 
   private CallRecordingItem makeItem (String id, String mode, String finalState,
@@ -423,7 +633,7 @@ public class CallRecordingRepositoryTest {
   }
 
   private static void tracks (File directory, String... names) throws IOException {
-    for (String name : names) write(new File(directory, name), "audio-" + name);
+    for (String name : names) write(new File(directory, name), repeat("audio-" + name, 8));
   }
 
   private static void write (File file, String value) throws IOException {
@@ -468,6 +678,23 @@ public class CallRecordingRepositoryTest {
       "\"local\":{\"enabled\":true,\"writerFailed\":false}," +
       "\"remote\":{\"enabled\":true,\"writerFailed\":false}," +
       "\"invariant\":{\"timelineInternalFailure\":false}" +
+      "}";
+  }
+
+  private static String checkpointMetadata (String sessionId, long committedSample) {
+    return "{" +
+      "\"schemaVersion\":2," +
+      "\"sessionId\":\"" + sessionId + "\"," +
+      "\"callId\":7," +
+      "\"call\":{\"callId\":7,\"userId\":123456789," +
+        "\"displayName\":\"Test User\",\"isOutgoing\":true}," +
+      "\"recordingStartTime\":\"2026-09-12T10:00:00.000Z\"," +
+      "\"timelineSampleRate\":48000," +
+      "\"durationMs\":" + (committedSample / 48) + "," +
+      "\"lastCommittedTimelineSample\":" + committedSample + "," +
+      "\"outputMode\":\"mixed_and_separate\"," +
+      "\"state\":\"in_progress\"," +
+      "\"control\":{\"runtimeState\":\"recording\",\"finalState\":\"in_progress\"}" +
       "}";
   }
 

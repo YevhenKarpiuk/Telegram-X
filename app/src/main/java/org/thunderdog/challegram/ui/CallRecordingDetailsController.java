@@ -523,6 +523,7 @@ public final class CallRecordingDetailsController
     switch (status) {
       case COMPLETED: return Lang.getString(R.string.CallRecordingStatusCompleted);
       case FAILED: return Lang.getString(R.string.CallRecordingStatusFailed);
+      case INTERRUPTED: return Lang.getString(R.string.CallRecordingStatusInterrupted);
       case IN_PROGRESS: return Lang.getString(R.string.CallRecordingStatusInProgress);
       default: return Lang.getString(R.string.CallRecordingStatusIncomplete);
     }

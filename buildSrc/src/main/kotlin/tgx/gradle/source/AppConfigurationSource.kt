@@ -28,9 +28,10 @@ abstract class AppConfigurationSource : ValueSource<ApplicationConfig, AppConfig
     val properties = loadProperties(parameters.properties.get().asFile)
     val defaults = loadProperties(parameters.defaults.get().asFile)
 
-    val keystoreFilePath = properties.getProperty("keystore.file", "").takeIf {
-      !(properties.getProperty("app.disable_signing")?.toBoolean() ?: false)
-    }
+    val signingDisabled = properties.getProperty("app.disable_signing")?.toBoolean() ?: false
+    val keystoreFilePath = properties.getProperty("keystore.file", "")
+      .trim()
+      .takeIf { it.isNotEmpty() && !signingDisabled }
 
     val applicationName = getOrDefault(properties, "app.name", defaults)
     val applicationId = getOrDefault(properties, "app.id", defaults)
@@ -39,7 +40,6 @@ abstract class AppConfigurationSource : ValueSource<ApplicationConfig, AppConfig
     ))
     val isExperimentalBuild =
       isExampleBuild ||
-      keystoreFilePath == null ||
       properties.getProperty("app.experimental", "false") == "true"
     val applicationExtension = getOrDefault(properties, "tgx.extension", defaults).also {
       require(it == "none" || it == "hms")

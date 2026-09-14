@@ -7,9 +7,6 @@
 #include <string>
 #include <functional>
 
-#include <api/audio/audio_frame_processor.h>
-#include <modules/audio_device/include/audio_device_data_observer.h>
-
 namespace tgx {
 namespace call_recording {
 
@@ -61,6 +58,8 @@ public:
       int64_t teardownMonotonicNs,
       int64_t callEndWallTimeMs);
   void finish();
+  void signalIntegrationFailure() noexcept;
+  const std::string &sessionId() const noexcept;
 
   void enqueueLocal(
       const int16_t *samples,
@@ -95,7 +94,8 @@ public:
   using StateCallback = std::function<void(
       RecordingState state,
       int64_t elapsedSamples,
-      bool autoRecordingEnabled)>;
+      bool autoRecordingEnabled,
+      const std::string &sessionId)>;
 
   static std::shared_ptr<CallRecordingController> Create(
       std::string basePath,
@@ -122,6 +122,7 @@ public:
   RecordingState state() const noexcept;
   int64_t elapsedSamples() const noexcept;
   bool autoRecordingEnabled() const noexcept;
+  void markIntegrationUnsupported() noexcept;
 
   void enqueueLocal(
       const int16_t *samples,
@@ -148,13 +149,6 @@ private:
 
   std::unique_ptr<Impl> impl_;
 };
-
-std::unique_ptr<webrtc::AudioDeviceDataObserver> CreateAudioDeviceObserver(
-    std::shared_ptr<CallRecordingController> controller);
-
-std::unique_ptr<webrtc::AudioFrameProcessor> CreateAudioFrameProcessor(
-    std::shared_ptr<CallRecordingController> controller,
-    std::unique_ptr<webrtc::AudioFrameProcessor> existingProcessor);
 
 } // namespace call_recording
 } // namespace tgx

@@ -2,7 +2,6 @@
 
 #include <android/log.h>
 
-#include <api/audio/audio_frame.h>
 #include <common_audio/resampler/include/push_resampler.h>
 #include <ogg/ogg.h>
 #include <opus.h>
@@ -26,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -72,6 +72,7 @@ constexpr char kCallRecorderLogTag[] = "TGX-CallRecorder";
 constexpr char kOpusVendor[] = "Telegram X Recorder";
 constexpr char kMixedAlgorithm[] =
     "fixed-point 0.5*local + 0.5*remote, saturating PCM16";
+constexpr std::chrono::seconds kMetadataCheckpointInterval(5);
 
 const char *OutputModeName(OutputMode mode) noexcept {
   switch (mode) {
@@ -193,6 +194,41 @@ bool RunMetadataTimeRegressionChecks() noexcept {
           startWallMs;
 }
 
+struct MetadataCheckpointDiagnostics {
+  uint64_t failures = 0;
+  uint32_t consecutiveFailures = 0;
+
+  constexpr void record(bool succeeded) noexcept {
+    if (succeeded) {
+      consecutiveFailures = 0;
+      return;
+    }
+    if (failures != std::numeric_limits<uint64_t>::max()) {
+      ++failures;
+    }
+    if (consecutiveFailures != std::numeric_limits<uint32_t>::max()) {
+      ++consecutiveFailures;
+    }
+  }
+};
+
+constexpr bool RunMetadataFailureIsolationRegressionChecks() noexcept {
+  MetadataCheckpointDiagnostics diagnostics;
+  diagnostics.record(false);
+  diagnostics.record(false);
+  if (diagnostics.failures != 2 || diagnostics.consecutiveFailures != 2) {
+    return false;
+  }
+  // Metadata failure only changes diagnostics. There is deliberately no
+  // recorder-fatal output in this state object.
+  diagnostics.record(true);
+  return diagnostics.failures == 2 && diagnostics.consecutiveFailures == 0;
+}
+
+static_assert(
+    RunMetadataFailureIsolationRegressionChecks(),
+    "metadata checkpoint failures must remain retryable and non-fatal");
+
 bool EnsureDirectory(
     const std::string &path,
     bool allowExisting) noexcept {
@@ -224,6 +260,38 @@ bool EnsureDirectory(
       mkdirError,
       std::strerror(mkdirError));
   return false;
+}
+
+bool AtomicWriteFile(
+    const std::string &directory,
+    const std::string &filename,
+    const std::string &value) noexcept {
+  const std::string finalPath = directory + "/" + filename;
+  const std::string temporaryPath = finalPath + ".tmp";
+  FILE *file = std::fopen(temporaryPath.c_str(), "wb");
+  if (file == nullptr) {
+    return false;
+  }
+  bool success = std::fwrite(value.data(), 1, value.size(), file) == value.size() &&
+      std::ferror(file) == 0 && std::fflush(file) == 0;
+  if (success) {
+    const int descriptor = fileno(file);
+    success = descriptor >= 0 && fsync(descriptor) == 0;
+  }
+  if (std::fclose(file) != 0) {
+    success = false;
+  }
+  if (!success || std::rename(temporaryPath.c_str(), finalPath.c_str()) != 0) {
+    return false;
+  }
+  const int directoryDescriptor = open(directory.c_str(), O_RDONLY | O_DIRECTORY);
+  if (directoryDescriptor >= 0) {
+    // The file is already atomically visible. Directory fsync is best effort
+    // because some Android filesystems reject it.
+    (void) fsync(directoryDescriptor);
+    (void) close(directoryDescriptor);
+  }
+  return true;
 }
 
 struct AudioBlock {
@@ -1128,6 +1196,30 @@ public:
     }
   }
 
+  bool checkpoint() noexcept {
+    if (!enabled_ || finalized_) {
+      return !failed_;
+    }
+    if (failed_) {
+      return false;
+    }
+    if (file_ == nullptr) {
+      return true;
+    }
+    try {
+      // Keep the newest packet pending so a clean finish can mark it EOS.
+      // Flush all earlier complete packets into a recoverable Ogg page.
+      if (!drainOggPages(true) || std::fflush(file_) != 0) {
+        fail();
+        return false;
+      }
+      return true;
+    } catch (...) {
+      fail();
+      return false;
+    }
+  }
+
   void fail() noexcept {
     failed_ = true;
     abortResources();
@@ -1687,6 +1779,12 @@ public:
         static_cast<unsigned long long>(localWriter_.encodedSamples()),
         static_cast<unsigned long long>(remoteWriter_.encodedSamples()),
         static_cast<unsigned long long>(mixedWriter_.encodedSamples()));
+  }
+
+  void checkpointWriters() noexcept {
+    (void) localWriter_.checkpoint();
+    (void) remoteWriter_.checkpoint();
+    (void) mixedWriter_.checkpoint();
   }
 
   void markAllWritersFailed() noexcept {
@@ -2266,6 +2364,7 @@ public:
         static_cast<uint64_t>(framesPerChannel) * 1000U >
             static_cast<uint64_t>(sampleRate) *
                 kMaxAcceptedBlockDurationMs) {
+      formatMismatch_.store(true, std::memory_order_release);
       droppedBlocks_.fetch_add(1, std::memory_order_relaxed);
       return;
     }
@@ -2325,6 +2424,15 @@ public:
   }
 
   bool drainOne() noexcept {
+    if (formatMismatch_.exchange(false, std::memory_order_acq_rel)) {
+      __android_log_print(
+          ANDROID_LOG_ERROR,
+          kCallRecorderLogTag,
+          "%s PCM format unsupported; capture disabled",
+          streamId_);
+      markFailed();
+      return true;
+    }
     const size_t tail = tail_.load(std::memory_order_relaxed);
     if (tail == head_.load(std::memory_order_acquire)) {
       return false;
@@ -2466,6 +2574,10 @@ public:
     if (timeline_ != nullptr) {
       timeline_->markCaptureFailed(side_);
     }
+  }
+
+  void signalFormatMismatch() noexcept {
+    formatMismatch_.store(true, std::memory_order_release);
   }
 
 private:
@@ -2724,6 +2836,7 @@ private:
   std::atomic<size_t> tail_ = {0};
   std::atomic<uint64_t> captureControl_ = {0};
   std::atomic<bool> failed_ = {false};
+  std::atomic<bool> formatMismatch_ = {false};
   std::atomic<uint64_t> droppedBlocks_ = {0};
   std::atomic<uint64_t> nextSequence_ = {0};
   std::atomic<uint64_t> droppedRecoverableBlocks_ = {0};
@@ -2756,122 +2869,6 @@ private:
   uint64_t accountedDroppedUnknownDurationBlocks_ = 0;
 };
 
-class RecordingAudioDeviceObserver final
-    : public webrtc::AudioDeviceDataObserver {
-public:
-  explicit RecordingAudioDeviceObserver(
-      std::shared_ptr<CallRecordingController> controller)
-      : controller_(std::move(controller)) {
-  }
-
-  void OnCaptureData(
-      const void *, size_t, size_t, size_t, uint32_t) override {
-    // ADM capture is raw microphone audio, not the selected post-APM signal.
-  }
-
-  void OnRenderData(
-      const void *audioSamples,
-      size_t numSamples,
-      size_t bytesPerSample,
-      size_t numChannels,
-      uint32_t samplesPerSec) override {
-    controller_->enqueueRemote(
-        audioSamples,
-        numSamples,
-        bytesPerSample,
-        numChannels,
-        samplesPerSec);
-  }
-
-private:
-  const std::shared_ptr<CallRecordingController> controller_;
-};
-
-class RecordingAudioFrameProcessor final
-    : public webrtc::AudioFrameProcessor {
-public:
-  RecordingAudioFrameProcessor(
-      std::shared_ptr<CallRecordingController> controller,
-      std::unique_ptr<webrtc::AudioFrameProcessor> existingProcessor)
-      : controller_(std::move(controller)),
-        existingProcessor_(std::move(existingProcessor)) {
-  }
-
-  void Process(std::unique_ptr<webrtc::AudioFrame> frame) override {
-    if (existingProcessor_ != nullptr) {
-      existingProcessor_->Process(std::move(frame));
-      return;
-    }
-
-    record(frame.get());
-    SinkHolder *sink = sink_.load(std::memory_order_acquire);
-    if (sink != nullptr) {
-      sink->callback(std::move(frame));
-    }
-  }
-
-  void SetSink(OnAudioFrameCallback sinkCallback) override {
-    if (existingProcessor_ != nullptr) {
-      if (!sinkCallback) {
-        existingProcessor_->SetSink(nullptr);
-      } else {
-        existingProcessor_->SetSink(
-            [controller = controller_, sink = std::move(sinkCallback)](
-                std::unique_ptr<webrtc::AudioFrame> frame) mutable {
-              if (frame != nullptr) {
-                controller->enqueueLocal(
-                    frame->data(),
-                    frame->samples_per_channel(),
-                    frame->num_channels(),
-                    static_cast<uint32_t>(frame->sample_rate_hz()));
-              }
-              sink(std::move(frame));
-            });
-      }
-      return;
-    }
-    if (!sinkCallback) {
-      sink_.store(nullptr, std::memory_order_release);
-      return;
-    }
-
-    auto holder = std::make_unique<SinkHolder>(std::move(sinkCallback));
-    SinkHolder *holderPointer = holder.get();
-    {
-      std::lock_guard<std::mutex> lock(sinkHoldersMutex_);
-      sinkHolders_.push_back(std::move(holder));
-    }
-    // Holders live until this processor is destroyed, so Process() needs only
-    // an atomic load and never waits for SetSink().
-    sink_.store(holderPointer, std::memory_order_release);
-  }
-
-private:
-  void record(const webrtc::AudioFrame *frame) noexcept {
-    if (frame == nullptr || frame->sample_rate_hz() <= 0) {
-      return;
-    }
-    controller_->enqueueLocal(
-        frame->data(),
-        frame->samples_per_channel(),
-        frame->num_channels(),
-        static_cast<uint32_t>(frame->sample_rate_hz()));
-  }
-
-  struct SinkHolder {
-    explicit SinkHolder(OnAudioFrameCallback value)
-        : callback(std::move(value)) {
-    }
-    OnAudioFrameCallback callback;
-  };
-
-  const std::shared_ptr<CallRecordingController> controller_;
-  std::unique_ptr<webrtc::AudioFrameProcessor> existingProcessor_;
-  std::atomic<SinkHolder *> sink_ = {nullptr};
-  std::mutex sinkHoldersMutex_;
-  std::vector<std::unique_ptr<SinkHolder>> sinkHolders_;
-};
-
 } // namespace
 
 class RecordingSession::Impl final {
@@ -2897,6 +2894,9 @@ public:
         startedManually_(!autoStarted),
         sessionStartMonotonicNs_(sessionStartMonotonicNs),
         recordingStartWallTimeMs_(recordingStartWallTimeMs),
+        sessionId_(FormatDirectoryTime(recordingStartWallTimeMs) +
+            "_" + std::to_string(callMetadata_.callId)),
+        sessionPath_(basePath_ + "/calls/" + sessionId_),
         timeline_(outputMode),
         local_(StreamSide::Local, &timeline_),
         remote_(StreamSide::Remote, &timeline_),
@@ -2922,6 +2922,7 @@ public:
       ++startCount_;
       // Publish only after every field consumed by the worker is initialized.
       started_.store(true, std::memory_order_release);
+      checkpointRequested_.store(true, std::memory_order_release);
       __android_log_print(
           ANDROID_LOG_INFO,
           kCallRecorderLogTag,
@@ -2948,6 +2949,7 @@ public:
           boundaryMonotonicNs);
       controlState_.store(ControlState::Paused, std::memory_order_release);
       ++pauseCount_;
+      checkpointRequested_.store(true, std::memory_order_release);
       wake_.notify_one();
     } catch (...) {
       reportFatalFailure();
@@ -2971,6 +2973,7 @@ public:
       local_.setAccepting(true);
       remote_.setAccepting(true);
       controlState_.store(ControlState::Recording, std::memory_order_release);
+      checkpointRequested_.store(true, std::memory_order_release);
       wake_.notify_one();
     } catch (...) {
       reportFatalFailure();
@@ -3006,6 +3009,7 @@ public:
           boundaryMonotonicNs, std::memory_order_relaxed);
       controlState_.store(ControlState::Inactive, std::memory_order_release);
       ++stopCount_;
+      checkpointRequested_.store(true, std::memory_order_release);
       wake_.notify_one();
     } catch (...) {
       reportFatalFailure();
@@ -3031,6 +3035,7 @@ public:
       remote_.setAccepting(true);
       controlState_.store(ControlState::Recording, std::memory_order_release);
       ++startCount_;
+      checkpointRequested_.store(true, std::memory_order_release);
       wake_.notify_one();
     } catch (...) {
       reportFatalFailure();
@@ -3082,6 +3087,8 @@ public:
     beginFinishCall(CurrentMonotonicTimeNs(), CurrentUnixTimeMs());
     local_.setAccepting(false);
     remote_.setAccepting(false);
+    checkpointRequested_.store(true, std::memory_order_release);
+    wake_.notify_one();
     finishRequested_.store(true, std::memory_order_release);
     wake_.notify_one();
     bool finished = false;
@@ -3144,7 +3151,35 @@ public:
         sampleRate);
   }
 
+  void signalIntegrationFailure() noexcept {
+    local_.signalFormatMismatch();
+    remote_.signalFormatMismatch();
+    wake_.notify_one();
+  }
+
+  const std::string &sessionId() const noexcept {
+    return sessionId_;
+  }
+
 private:
+  void recordMetadataCheckpointResult(
+      bool succeeded,
+      const char *operation) noexcept {
+    metadataCheckpointDiagnostics_.record(succeeded);
+    if (!succeeded &&
+        (metadataCheckpointDiagnostics_.consecutiveFailures == 1 ||
+         metadataCheckpointDiagnostics_.consecutiveFailures % 12 == 0)) {
+      __android_log_print(
+          ANDROID_LOG_WARN,
+          kCallRecorderLogTag,
+          "%s metadata write failed total=%llu consecutive=%u; will retry",
+          operation,
+          static_cast<unsigned long long>(
+              metadataCheckpointDiagnostics_.failures),
+          metadataCheckpointDiagnostics_.consecutiveFailures);
+    }
+  }
+
   void reportFatalFailure() noexcept {
     bool expected = false;
     if (!fatalFailureReported_.compare_exchange_strong(
@@ -3153,6 +3188,8 @@ private:
     }
     local_.setAccepting(false);
     remote_.setAccepting(false);
+    checkpointRequested_.store(true, std::memory_order_release);
+    wake_.notify_one();
     try {
       if (fatalFailureCallback_) {
         fatalFailureCallback_();
@@ -3187,11 +3224,14 @@ private:
       timeline_.finish(
           sessionEndMonotonicNs_.load(std::memory_order_acquire));
       if (directoryReady_) {
+        bool metadataCommitted = false;
         try {
-          writeInfo();
+          metadataCommitted = writeInfo();
         } catch (...) {
         }
-        (void) std::remove((sessionPath_ + "/.in_progress").c_str());
+        if (metadataCommitted) {
+          (void) std::remove((sessionPath_ + "/.in_progress").c_str());
+        }
       }
     }
   }
@@ -3209,6 +3249,7 @@ private:
       timeline_.markAllWritersFailed();
     }
     bool filesPrepared = false;
+    auto nextCheckpoint = std::chrono::steady_clock::now();
     while (true) {
       if (started_.load(std::memory_order_acquire) && !filesPrepared) {
         filesPrepared = true;
@@ -3255,6 +3296,19 @@ private:
         }
       }
 
+      const auto checkpointNow = std::chrono::steady_clock::now();
+      const bool checkpointDue = checkpointRequested_.exchange(
+          false, std::memory_order_acq_rel) || checkpointNow >= nextCheckpoint;
+      if (filesPrepared && directoryReady_ && checkpointDue &&
+          !finishRequested_.load(std::memory_order_acquire)) {
+        timeline_.checkpointWriters();
+        if (timeline_.requiredOutputsFailed()) {
+          reportFatalFailure();
+        }
+        recordMetadataCheckpointResult(writeCheckpoint(), "checkpoint");
+        nextCheckpoint = checkpointNow + kMetadataCheckpointInterval;
+      }
+
       if (finishRequested_.load(std::memory_order_acquire) &&
           local_.empty() && remote_.empty()) {
         break;
@@ -3271,12 +3325,16 @@ private:
     timeline_.finish(
         sessionEndMonotonicNs_.load(std::memory_order_acquire));
     if (filesPrepared && directoryReady_) {
+      bool metadataCommitted = false;
       try {
-        writeInfo();
+        metadataCommitted = writeInfo();
       } catch (...) {
-        // Metadata failure does not affect completed call teardown.
+        // Failure is reported below without escaping into call teardown.
       }
-      (void) std::remove((sessionPath_ + "/.in_progress").c_str());
+      recordMetadataCheckpointResult(metadataCommitted, "final");
+      if (metadataCommitted) {
+        (void) std::remove((sessionPath_ + "/.in_progress").c_str());
+      }
     }
   }
 
@@ -3289,9 +3347,6 @@ private:
       return;
     }
     const std::string callsPath = basePath_ + "/calls";
-    sessionId_ = FormatDirectoryTime(recordingStartWallTimeMs_) +
-        "_" + std::to_string(callMetadata_.callId);
-    sessionPath_ = callsPath + "/" + sessionId_;
     __android_log_print(
         ANDROID_LOG_INFO,
         kCallRecorderLogTag,
@@ -3327,7 +3382,64 @@ private:
     }
   }
 
-  void writeInfo() {
+  const char *controlStateName() const noexcept {
+    switch (controlState_.load(std::memory_order_acquire)) {
+      case ControlState::Recording: return "recording";
+      case ControlState::Paused: return "paused";
+      case ControlState::Inactive: return "inactive";
+    }
+    return "recording";
+  }
+
+  bool writeCheckpoint() noexcept {
+    try {
+      const uint64_t committedSample = timeline_.commitCursor();
+      uint64_t durationMs = 0;
+      (void) TimelineSamplesToMilliseconds(committedSample, durationMs);
+      const int64_t checkpointWallTimeMs = CurrentUnixTimeMs();
+      const int64_t checkpointMonotonicNs = CurrentMonotonicTimeNs();
+      const bool failed = fatalFailureReported_.load(std::memory_order_acquire);
+      std::ostringstream json;
+      json << "{\n"
+           << "  \"schemaVersion\": 2,\n"
+           << "  \"sessionId\": \"" << JsonEscape(sessionId_) << "\",\n"
+           << "  \"callId\": " << callMetadata_.callId << ",\n"
+           << "  \"call\": {\n"
+           << "    \"callId\": " << callMetadata_.callId << ",\n"
+           << "    \"userId\": " << callMetadata_.userId << ",\n"
+           << "    \"displayName\": \""
+           << JsonEscape(callMetadata_.displayName) << "\",\n"
+           << "    \"isOutgoing\": "
+           << (callMetadata_.isOutgoing ? "true" : "false") << "\n"
+           << "  },\n"
+           << "  \"recordingStartTime\": \""
+           << FormatJsonTime(recordingStartWallTimeMs_) << "\",\n"
+           << "  \"recordingEndTime\": \""
+           << FormatJsonTime(recordingStartWallTimeMs_ +
+                  static_cast<int64_t>(durationMs)) << "\",\n"
+           << "  \"timelineSampleRate\": " << kOutputSampleRate << ",\n"
+           << "  \"durationMs\": " << durationMs << ",\n"
+           << "  \"lastCommittedTimelineSample\": " << committedSample << ",\n"
+           << "  \"lastCheckpointWallTime\": \""
+           << FormatJsonTime(checkpointWallTimeMs) << "\",\n"
+           << "  \"lastCheckpointMonotonicNs\": "
+           << checkpointMonotonicNs << ",\n"
+           << "  \"outputMode\": \"" << OutputModeName(outputMode_) << "\",\n"
+           << "  \"state\": \"" << (failed ? "failed" : "in_progress")
+           << "\",\n"
+           << "  \"control\": {\n"
+           << "    \"runtimeState\": \"" << controlStateName() << "\",\n"
+           << "    \"finalState\": \""
+           << (failed ? "failed" : "in_progress") << "\"\n"
+           << "  }\n"
+           << "}\n";
+      return AtomicWriteFile(sessionPath_, "info.json", json.str());
+    } catch (...) {
+      return false;
+    }
+  }
+
+  bool writeInfo() {
     const int64_t recordingEndWallTimeMs = MonotonicEndToWallTimeMs(
         recordingStartWallTimeMs_,
         timeline_.sessionStartMonotonicNs(),
@@ -3343,7 +3455,7 @@ private:
         timeline_.timelineSamples(), timelineDurationMs);
     std::ostringstream json;
     json << "{\n"
-         << "  \"schemaVersion\": 1,\n"
+         << "  \"schemaVersion\": 2,\n"
          << "  \"sessionId\": \"" << JsonEscape(sessionId_) << "\",\n"
          << "  \"call\": {\n"
          << "    \"callId\": " << callMetadata_.callId << ",\n"
@@ -3377,6 +3489,9 @@ private:
          << "  \"durationMs\": " << timelineDurationMs << ",\n"
          << "  \"outputMode\": \"" << OutputModeName(outputMode_)
          << "\",\n"
+         << "  \"state\": \""
+         << (fatalFailureReported_.load(std::memory_order_acquire)
+             ? "failed" : "finalized") << "\",\n"
          << "  \"control\": {\n"
          << "    \"autoStarted\": "
          << (autoStarted_ ? "true" : "false") << ",\n"
@@ -3405,20 +3520,7 @@ private:
     appendMixedInfo(json, timeline_, true);
     appendInvariantInfo(json, timeline_);
     json << "}\n";
-    const std::string value = json.str();
-    const std::string infoPath = sessionPath_ + "/info.json";
-    FILE *file = std::fopen(infoPath.c_str(), "wb");
-    if (file == nullptr) {
-      return;
-    }
-    const bool writeSucceeded =
-        std::fwrite(value.data(), 1, value.size(), file) == value.size() &&
-        std::ferror(file) == 0;
-    const bool flushSucceeded = std::fflush(file) == 0;
-    const bool closeSucceeded = std::fclose(file) == 0;
-    (void) writeSucceeded;
-    (void) flushSucceeded;
-    (void) closeSucceeded;
+    return AtomicWriteFile(sessionPath_, "info.json", json.str());
   }
 
   static void appendControlIntervals(
@@ -3696,27 +3798,29 @@ private:
   const OutputMode outputMode_;
   const bool autoStarted_;
   const bool startedManually_;
+  const int64_t sessionStartMonotonicNs_;
+  const int64_t recordingStartWallTimeMs_;
+  const std::string sessionId_;
+  const std::string sessionPath_;
   SessionAudioTimeline timeline_;
   AudioStream local_;
   AudioStream remote_;
   std::atomic<bool> started_ = {false};
   std::atomic<bool> finalizing_ = {false};
   std::atomic<bool> finishRequested_ = {false};
+  std::atomic<bool> checkpointRequested_ = {false};
   std::atomic<ControlState> controlState_ = {ControlState::Recording};
   std::atomic<int64_t> pendingStoppedIntervalStartNs_ = {0};
   std::atomic<int64_t> lastActiveRecordingBoundaryNs_ = {0};
   uint32_t startCount_ = 0;
   uint32_t pauseCount_ = 0;
   uint32_t stopCount_ = 0;
-  const int64_t sessionStartMonotonicNs_;
-  const int64_t recordingStartWallTimeMs_;
   std::atomic<int64_t> callEndWallTimeMs_ = {0};
   std::atomic<int64_t> sessionEndMonotonicNs_ = {0};
-  std::string sessionId_;
-  std::string sessionPath_;
   bool directoryReady_ = false;
   std::function<void()> fatalFailureCallback_;
   std::atomic<bool> fatalFailureReported_ = {false};
+  MetadataCheckpointDiagnostics metadataCheckpointDiagnostics_;
 
   std::mutex lifecycleMutex_;
   std::mutex wakeMutex_;
@@ -3800,6 +3904,14 @@ void RecordingSession::beginFinishCall(
 
 void RecordingSession::finish() {
   impl_->finish();
+}
+
+void RecordingSession::signalIntegrationFailure() noexcept {
+  impl_->signalIntegrationFailure();
+}
+
+const std::string &RecordingSession::sessionId() const noexcept {
+  return impl_->sessionId();
 }
 
 void RecordingSession::enqueueLocal(
@@ -4034,6 +4146,41 @@ public:
     return autoRecordingEnabled_;
   }
 
+  void markIntegrationUnsupported() noexcept {
+    std::shared_ptr<RecordingSession> session;
+    bool changed = false;
+    try {
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const RecordingState oldState = state_.load(
+            std::memory_order_relaxed);
+        if (oldState == RecordingState::Failed ||
+            oldState == RecordingState::Finalized ||
+            oldState == RecordingState::Unsupported) {
+          return;
+        }
+        captureTarget_.store(nullptr, std::memory_order_release);
+        session = session_;
+        state_.store(
+            session == nullptr
+                ? RecordingState::Unsupported
+                : RecordingState::Failed,
+            std::memory_order_release);
+        changed = true;
+      }
+      if (session != nullptr) {
+        session->signalIntegrationFailure();
+      }
+    } catch (...) {
+      captureTarget_.store(nullptr, std::memory_order_release);
+      state_.store(RecordingState::Failed, std::memory_order_release);
+    }
+    if (changed) {
+      logTransition("recorder integration unsupported");
+      notifyState();
+    }
+  }
+
   void enqueueLocal(
       const int16_t *samples,
       size_t framesPerChannel,
@@ -4070,7 +4217,9 @@ private:
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (!supported_ || finishBegun_ ||
-          state_.load(std::memory_order_relaxed) == RecordingState::Failed) {
+          state_.load(std::memory_order_relaxed) == RecordingState::Failed ||
+          state_.load(std::memory_order_relaxed) ==
+              RecordingState::Unsupported) {
         return;
       }
       const RecordingState oldState = state_.load(std::memory_order_relaxed);
@@ -4148,14 +4297,26 @@ private:
   void notifyState() noexcept {
     try {
       if (stateCallback_) {
-        stateCallback_(state(), elapsedSamples(), autoRecordingEnabled_);
+        std::string sessionId;
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          if (session_ != nullptr) {
+            sessionId = session_->sessionId();
+          }
+        }
+        stateCallback_(
+            state(), elapsedSamples(), autoRecordingEnabled_, sessionId);
       }
     } catch (...) {
     }
   }
 
   static void logTransition(const char *message) noexcept {
+#ifndef NDEBUG
     __android_log_print(ANDROID_LOG_INFO, kCallRecorderLogTag, "%s", message);
+#else
+    (void) message;
+#endif
   }
 
   const std::string basePath_;
@@ -4229,6 +4390,9 @@ void CallRecordingController::finishCall() { impl_->finishCall(); }
 RecordingState CallRecordingController::state() const noexcept { return impl_->state(); }
 int64_t CallRecordingController::elapsedSamples() const noexcept { return impl_->elapsedSamples(); }
 bool CallRecordingController::autoRecordingEnabled() const noexcept { return impl_->autoRecordingEnabled(); }
+void CallRecordingController::markIntegrationUnsupported() noexcept {
+  impl_->markIntegrationUnsupported();
+}
 void CallRecordingController::enqueueLocal(
     const int16_t *samples, size_t framesPerChannel, size_t channels,
     uint32_t sampleRate) noexcept {
@@ -4239,28 +4403,6 @@ void CallRecordingController::enqueueRemote(
     size_t channels, uint32_t sampleRate) noexcept {
   impl_->enqueueRemote(
       samples, framesPerChannel, bytesPerFrame, channels, sampleRate);
-}
-
-std::unique_ptr<webrtc::AudioDeviceDataObserver> CreateAudioDeviceObserver(
-    std::shared_ptr<CallRecordingController> controller) {
-  try {
-    return std::make_unique<RecordingAudioDeviceObserver>(
-        std::move(controller));
-  } catch (...) {
-    return nullptr;
-  }
-}
-
-std::unique_ptr<webrtc::AudioFrameProcessor> CreateAudioFrameProcessor(
-    std::shared_ptr<CallRecordingController> controller,
-    std::unique_ptr<webrtc::AudioFrameProcessor> existingProcessor) {
-  try {
-    return std::make_unique<RecordingAudioFrameProcessor>(
-        std::move(controller),
-        std::move(existingProcessor));
-  } catch (...) {
-    return existingProcessor;
-  }
 }
 
 } // namespace call_recording

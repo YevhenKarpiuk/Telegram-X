@@ -24,6 +24,7 @@ import org.thunderdog.challegram.voip.annotation.AudioState;
 import org.thunderdog.challegram.voip.annotation.CallNetworkType;
 import org.thunderdog.challegram.voip.annotation.CallRecordingOutputMode;
 import org.thunderdog.challegram.voip.annotation.CallRecordingState;
+import org.thunderdog.challegram.voip.recording.CallRecordingActiveSessions;
 import org.thunderdog.challegram.voip.annotation.VideoState;
 
 @SuppressWarnings("JavaJniMissingFunction")
@@ -191,8 +192,10 @@ public class TgCallsController extends VoIPInstance {
   protected final void handleCallRecordingStateChanged (
     @CallRecordingState int state,
     long elapsedSamples,
-    boolean autoRecordingEnabled
+    boolean autoRecordingEnabled,
+    @NonNull String sessionId
   ) {
+    CallRecordingActiveSessions.update(sessionId, state);
     this.callRecordingState = state;
     this.callRecordingElapsedSamples = elapsedSamples;
     this.autoCallRecordingEnabled = autoRecordingEnabled;

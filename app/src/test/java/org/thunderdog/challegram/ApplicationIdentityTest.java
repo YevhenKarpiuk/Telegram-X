@@ -14,4 +14,11 @@ public class ApplicationIdentityTest {
     assertEquals("ka.soft.tgxr", BuildConfig.APPLICATION_ID);
     assertEquals(BuildConfig.APPLICATION_ID + ".provider", Config.FILE_PROVIDER_AUTHORITY);
   }
+
+  @Test
+  public void recorderReleaseIdentityIsIndependentFromUpstreamVersioning () {
+    assertEquals(1, BuildConfig.TGXR_RELEASE_VERSION);
+    assertEquals("1.0", BuildConfig.TGXR_RELEASE_NAME);
+    assertEquals(1808, BuildConfig.ORIGINAL_VERSION_CODE);
+  }
 }

@@ -1,3 +1,67 @@
+# Telegram X Recorder
+
+Telegram X Recorder is an independent fork of Telegram X whose main added
+feature is local recording of ordinary one-to-one Telegram calls.
+
+- **Application name:** Telegram X Recorder
+- **Package:** `ka.soft.tgxr`
+- **Recorder release:** `1.0`
+- **Current public build:** ARM64-v8a
+
+## Call recording
+
+For ordinary Telegram 1:1 calls, the recorder can produce:
+
+- `local.opus` — the local side of the call;
+- `remote.opus` — the remote side of the call;
+- `mixed.opus` — both sides mixed into a conversation recording.
+
+Group calls / Voice Chats are not supported yet.
+
+Recording can start automatically or be controlled manually with **Start**,
+**Pause**, **Resume**, **Stop**, and **Restart** within the current call
+session. The output mode can be selected as **mixed + separate**, **mixed only**,
+or **separate only**.
+
+## Recordings, playback, and recovery
+
+The built-in recordings browser provides metadata, playback, and a choice of
+the Mixed, Local, or Remote track. Recordings can be shared, saved, exported
+as a ZIP archive, or deleted.
+
+If the application or its process terminates unexpectedly during recording,
+the unfinished session is detected on the next launch and recovered as
+`INTERRUPTED`. A small tail of audio may be lost after a hard process crash;
+recovery does not promise preservation of the final audio sample.
+
+## Storage and privacy
+
+Recording is performed locally on the device. Files remain in private application storage
+until the user explicitly shares, saves, or exports them, and the application
+does not upload recordings to a third-party server on its own.
+
+The user is responsible for complying with applicable laws and obtaining any
+required consent before recording calls.
+
+## Android 15 incoming calls
+
+Background and locked-screen incoming 1:1 calls are supported using the
+required foreground-service transition: `RINGING / shortService -> MICROPHONE`
+after the call is answered.
+
+## Technical overview
+
+The recorder intercepts internal PCM inside tgcalls/WebRTC: the local hook uses
+`AudioFrameProcessor`, while the remote render hook uses
+`AudioDeviceDataObserver`. Realtime callback paths only copy into bounded
+queues; a background worker performs file I/O and writes Opus/Ogg output.
+Recorder failure is isolated so it does not break the call, and the tgcalls
+integration is kept behind a dedicated adapter. See
+[the tgcalls recorder upgrade guide](docs/TGCALLS_RECORDER_UPGRADE.md) for the
+integration contract and upgrade procedure.
+
+---
+
 # [Telegram X](https://play.google.com/store/apps/details?id=org.thunderdog.challegram) — a slick experimental Telegram client based on [TDLib](https://core.telegram.org/tdlib).
 
 ![Telegram X](/images/feature.png)

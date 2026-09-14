@@ -993,6 +993,9 @@ public class TGCallService extends Service implements
     @CallForegroundStateMachine.State int previousState,
     @CallForegroundStateMachine.State int newState
   ) {
+    if (!BuildConfig.DEBUG) {
+      return;
+    }
     String callState = call != null && call.state != null ?
       call.state.getClass().getSimpleName() : "NONE";
     Log.i(Log.TAG_VOIP,

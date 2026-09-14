@@ -4,6 +4,7 @@ import android.app.Service
 import org.drinkless.tdlib.TdApi
 import org.thunderdog.challegram.Log
 import org.thunderdog.challegram.TDLib
+import org.thunderdog.challegram.BuildConfig
 import org.thunderdog.challegram.telegram.TdlibManager
 import org.thunderdog.challegram.tool.UI
 import org.thunderdog.challegram.unsorted.Settings
@@ -30,7 +31,7 @@ class PushHandler : PushManager {
   }
 
   override fun log(format: String, vararg args: Any) =
-    TDLib.Tag.notifications(format, args)
+    if (BuildConfig.DEBUG) TDLib.Tag.notifications(format, args) else Unit
 
   override fun error(message: String, error: Throwable?) {
     TDLib.Tag.notifications("$message: ${Log.toString(error)}")

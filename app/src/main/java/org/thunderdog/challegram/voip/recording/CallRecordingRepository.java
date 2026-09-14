@@ -61,6 +61,7 @@ public final class CallRecordingRepository {
   }
 
   private static final String INFO_FILE = "info.json";
+  private static final String INFO_TEMP_FILE = "info.json.tmp";
   private static final String MIXED_FILE = "mixed.opus";
   private static final String LOCAL_FILE = "local.opus";
   private static final String REMOTE_FILE = "remote.opus";
@@ -69,6 +70,7 @@ public final class CallRecordingRepository {
   private static final int MAX_METADATA_BYTES = 2 * 1024 * 1024;
   private static final int MAX_EXPORT_NAME_CODE_POINTS = 64;
   private static final int DEFAULT_TIMELINE_SAMPLE_RATE = 48000;
+  private static final long MIN_PLAYABLE_FILE_BYTES = 64;
   static final long EXPORT_MAX_AGE_MS = TimeUnit.HOURS.toMillis(24);
   private static final String EXPORT_DIRECTORY_PREFIX = "export_";
   private static final AtomicLong NEXT_EXPORT_ID = new AtomicLong();
@@ -318,11 +320,20 @@ public final class CallRecordingRepository {
 
   private CallRecordingItem parseDirectory (File directory) throws IOException, JSONException {
     File info = safeChild(directory, INFO_FILE);
+    File temporaryInfo = safeChild(directory, INFO_TEMP_FILE);
     JSONObject json = null;
     boolean metadataValid = false;
     if (info.isFile()) {
       try {
         json = new JSONObject(readMetadata(info));
+        metadataValid = true;
+      } catch (Throwable ignored) {
+        json = null;
+      }
+    }
+    if (!metadataValid && temporaryInfo.isFile()) {
+      try {
+        json = new JSONObject(readMetadata(temporaryInfo));
         metadataValid = true;
       } catch (Throwable ignored) {
         json = null;
@@ -341,11 +352,8 @@ public final class CallRecordingRepository {
 
     String directoryId = directory.getName();
     int schemaVersion = json != null ? json.optInt("schemaVersion", 0) : 0;
-    String sessionId = json != null ? json.optString("sessionId", directoryId) : directoryId;
-    // A metadata sessionId is descriptive only and never used as a path.
-    if (sessionId.isEmpty()) {
-      sessionId = directoryId;
-    }
+    // A metadata sessionId is descriptive only; the directory is the immutable identity.
+    String sessionId = directoryId;
     JSONObject call = json != null ? json.optJSONObject("call") : null;
     long callId = call != null ? call.optLong("callId", json.optLong("callId", 0))
       : json != null ? json.optLong("callId", 0) : 0;
@@ -367,14 +375,23 @@ public final class CallRecordingRepository {
     if (callEndTime == 0) {
       callEndTime = endTime;
     }
+    int timelineSampleRate = resolveTimelineSampleRate(json);
     long durationMs = json != null ? json.optLong("durationMs", 0) : 0;
+    if (durationMs <= 0 && json != null) {
+      long committedSamples = json.optLong("lastCommittedTimelineSample",
+        json.optLong("timelineSamples", 0));
+      if (committedSamples > 0 && timelineSampleRate > 0) {
+        durationMs = committedSamples > Long.MAX_VALUE / 1000L
+          ? Long.MAX_VALUE
+          : committedSamples * 1000L / timelineSampleRate;
+      }
+    }
     if (durationMs <= 0 && endTime >= startTime) {
       durationMs = endTime - startTime;
     }
     String outputMode = json != null
       ? json.optString("outputMode", inferOutputMode(hasMixed, hasLocal, hasRemote))
       : inferOutputMode(hasMixed, hasLocal, hasRemote);
-    int timelineSampleRate = resolveTimelineSampleRate(json);
 
     ArrayList<CallRecordingItem.ControlInterval> pauses = new ArrayList<>();
     ArrayList<CallRecordingItem.ControlInterval> stopped = new ArrayList<>();
@@ -417,13 +434,17 @@ public final class CallRecordingRepository {
     boolean hasRemote = isPlayableFile(remote);
     long start = parseDirectoryTime(directory.getName());
     if (start == 0) start = directory.lastModified();
+    CallRecordingItem.Status status = CallRecordingActiveSessions.isActive(directory.getName())
+      ? CallRecordingItem.Status.IN_PROGRESS
+      : hasMarker(directory) ? CallRecordingItem.Status.INTERRUPTED
+      : CallRecordingItem.Status.INCOMPLETE;
     return new CallRecordingItem(directory.getName(), directory, 0, 0, 0, "",
       null, start, 0, 0, 0, DEFAULT_TIMELINE_SAMPLE_RATE,
       inferOutputMode(hasMixed, hasLocal, hasRemote),
       hasMixed, hasLocal, hasRemote, hasMixed ? mixed.length() : 0,
       hasLocal ? local.length() : 0, hasRemote ? remote.length() : 0,
       (hasMixed ? mixed.length() : 0) + (hasLocal ? local.length() : 0) +
-        (hasRemote ? remote.length() : 0), CallRecordingItem.Status.INCOMPLETE,
+        (hasRemote ? remote.length() : 0), status,
       new ArrayList<>(), new ArrayList<>());
   }
 
@@ -436,18 +457,21 @@ public final class CallRecordingRepository {
     boolean hasLocal,
     boolean hasRemote
   ) throws IOException {
-    if (hasLiveMarker(directory)) {
+    if (CallRecordingActiveSessions.isActive(directory.getName())) {
       return CallRecordingItem.Status.IN_PROGRESS;
     }
+    boolean marker = hasMarker(directory);
     if (!metadataValid || json == null) {
-      return CallRecordingItem.Status.INCOMPLETE;
+      return marker ? CallRecordingItem.Status.INTERRUPTED
+        : CallRecordingItem.Status.INCOMPLETE;
     }
     JSONObject control = json.optJSONObject("control");
     JSONObject invariant = json.optJSONObject("invariant");
     String finalState = control != null ? control.optString("finalState", "") : "";
+    String state = json.optString("state", "");
     boolean timelineFailed = invariant != null &&
       invariant.optBoolean("timelineInternalFailure", false);
-    if ("failed".equals(finalState) || timelineFailed) {
+    if ("failed".equals(finalState) || "failed".equals(state) || timelineFailed) {
       return CallRecordingItem.Status.FAILED;
     }
     boolean expectedPresent;
@@ -458,11 +482,17 @@ public final class CallRecordingRepository {
     }
     boolean writerFailed = enabledWriterFailed(json, "mixed") ||
       enabledWriterFailed(json, "local") || enabledWriterFailed(json, "remote");
-    boolean finalized = "finalized".equals(finalState) ||
+    boolean finalized = "finalized".equals(finalState) || "finalized".equals(state) ||
       (json.has("stopTime") && !json.optString("stopTime").isEmpty());
-    return finalized && expectedPresent && !writerFailed
-      ? CallRecordingItem.Status.COMPLETED
-      : CallRecordingItem.Status.INCOMPLETE;
+    if (finalized) {
+      return expectedPresent && !writerFailed
+        ? CallRecordingItem.Status.COMPLETED
+        : CallRecordingItem.Status.INCOMPLETE;
+    }
+    if (marker || "in_progress".equals(state)) {
+      return CallRecordingItem.Status.INTERRUPTED;
+    }
+    return CallRecordingItem.Status.INCOMPLETE;
   }
 
   private static boolean enabledWriterFailed (JSONObject json, String key) {
@@ -490,15 +520,9 @@ public final class CallRecordingRepository {
     return inferred > 0 ? inferred : DEFAULT_TIMELINE_SAMPLE_RATE;
   }
 
-  private boolean hasLiveMarker (File directory) throws IOException {
+  private static boolean hasMarker (File directory) throws IOException {
     File marker = safeChild(directory, ACTIVE_MARKER);
-    if (!marker.isFile() || marker.length() > 32) return false;
-    try {
-      String value = readSmallFile(marker, 32).trim();
-      return Integer.parseInt(value) == currentPid;
-    } catch (Throwable ignored) {
-      return false;
-    }
+    return marker.isFile();
   }
 
   private void requireDirectSession (CallRecordingItem item) throws IOException {
@@ -516,15 +540,19 @@ public final class CallRecordingRepository {
   }
 
   private static File safeChild (File directory, String fixedName) throws IOException {
-    File child = new File(directory, fixedName).getCanonicalFile();
+    File unresolved = new File(directory, fixedName).getAbsoluteFile();
+    File child = unresolved.getCanonicalFile();
     if (!child.getParentFile().equals(directory.getCanonicalFile())) {
       throw new IOException("Unsafe recording child path");
+    }
+    if (!child.equals(unresolved)) {
+      throw new IOException("Recording child must not be a symbolic link");
     }
     return child;
   }
 
   private static boolean isPlayableFile (File file) {
-    return file.isFile() && file.length() > 0;
+    return file.isFile() && file.length() >= MIN_PLAYABLE_FILE_BYTES;
   }
 
   private File requireTrack (CallRecordingItem item, ExportVariant variant) throws IOException {
@@ -547,7 +575,7 @@ public final class CallRecordingRepository {
     try (ZipOutputStream zip = new ZipOutputStream(destination)) {
       for (String name : Arrays.asList(MIXED_FILE, LOCAL_FILE, REMOTE_FILE, INFO_FILE)) {
         File source = safeChild(item.sessionPath, name);
-        if (!source.isFile() || (name.endsWith(".opus") && source.length() == 0)) {
+        if (!source.isFile() || (name.endsWith(".opus") && !isPlayableFile(source))) {
           continue;
         }
         zip.putNextEntry(new ZipEntry(name));

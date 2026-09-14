@@ -677,13 +677,17 @@ public class Tdlib implements TdlibProvider, Settings.SettingsChangeListener, Da
       U.run(onDone);
       return;
     }
-    TDLib.Tag.notifications("TGX-Push: TDLib registerDevice requested, accountId:%d", accountId);
+    if (BuildConfig.DEBUG) {
+      TDLib.Tag.notifications("TGX-Push: TDLib registerDevice requested, accountId:%d", accountId);
+    }
     context.setDeviceRegistered(accountId, false);
     incrementJobReferenceCount(JOB_ID_CHECK_DEVICE_TOKEN);
     send(new TdApi.RegisterDevice(deviceToken, otherUserIds), (pushReceiverId, error) -> {
       try {
         if (pushReceiverId != null) {
-          TDLib.Tag.notifications("TGX-Push: TDLib registerDevice succeeded, accountId:%d, otherUserIdsCount:%d", accountId, otherUserIds.length);
+          if (BuildConfig.DEBUG) {
+            TDLib.Tag.notifications("TGX-Push: TDLib registerDevice succeeded, accountId:%d, otherUserIdsCount:%d", accountId, otherUserIds.length);
+          }
           Settings.instance().putNotificationReceiverId(pushReceiverId.id, accountId);
           TdlibSettingsManager.setRegisteredDevice(accountId, myUserId, deviceToken, otherUserIds);
           context().setDeviceRegistered(accountId, true);
@@ -6642,7 +6646,9 @@ public class Tdlib implements TdlibProvider, Settings.SettingsChangeListener, Da
   void processPushOrSync (long pushId, String payload, @Nullable Runnable after) {
     TDLib.Tag.notifications(pushId, accountId, "Started processing push notification, hasAfter:%b", after != null);
     incrementNotificationReferenceCount();
-    TDLib.Tag.notifications(pushId, accountId, "TGX-Push: push handed to TDLib");
+    if (BuildConfig.DEBUG) {
+      TDLib.Tag.notifications(pushId, accountId, "TGX-Push: push handed to TDLib");
+    }
     send(new TdApi.ProcessPushNotification(payload), (ok, error) -> {
       Runnable notificationChecker = () -> {
         TDLib.Tag.notifications(pushId, accountId, "Making sure all notifications displayed");

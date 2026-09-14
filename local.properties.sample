@@ -7,7 +7,12 @@
 # Path to Android SDK
 sdk.dir=
 
-## Path to the keystore file
+## Path to an external signing properties file (not the .jks itself).
+# The referenced file must stay outside this repository and define:
+# keystore.file=/absolute/path/to/tgxr-release.jks
+# keystore.password=...
+# key.alias=...
+# key.password=...
 keystore.file=
 
 ## Package name

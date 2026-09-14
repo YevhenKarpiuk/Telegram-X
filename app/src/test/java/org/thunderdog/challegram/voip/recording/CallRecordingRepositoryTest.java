@@ -157,6 +157,77 @@ public class CallRecordingRepositoryTest {
   }
 
   @Test
+  public void productionSessionRemainsDiscoverableAcrossMetadataRecoveryStates () throws Exception {
+    File directory = session("2026-09-14_11-11-08_5");
+    tracks(directory, "local.opus", "remote.opus", "mixed.opus");
+
+    List<CallRecordingItem> items = repository.scanNow();
+    assertEquals(1, items.size());
+    assertEquals(CallRecordingItem.Status.INCOMPLETE,
+      find(items, directory.getName()).status);
+
+    File info = new File(directory, "info.json");
+    write(info, metadata(true, directory.getName(),
+      "2026-09-14T11:11:08.000Z", "mixed_and_separate", "finalized",
+      false, false, "[]"));
+    items = repository.scanNow();
+    assertEquals(1, items.size());
+    assertEquals(CallRecordingItem.Status.COMPLETED,
+      find(items, directory.getName()).status);
+
+    assertTrue(info.delete());
+    File temporaryInfo = new File(directory, "info.json.tmp");
+    write(temporaryInfo, checkpointMetadata(directory.getName(), 96000));
+    items = repository.scanNow();
+    assertEquals(1, items.size());
+    assertEquals(CallRecordingItem.Status.INTERRUPTED,
+      find(items, directory.getName()).status);
+
+    assertTrue(temporaryInfo.delete());
+    File marker = new File(directory, ".in_progress");
+    write(marker, Integer.toString(TEST_PID));
+    items = repository.scanNow();
+    assertEquals(1, items.size());
+    assertEquals(CallRecordingItem.Status.INTERRUPTED,
+      find(items, directory.getName()).status);
+
+    assertTrue(marker.delete());
+    write(info, "{malformed");
+    items = repository.scanNow();
+    assertEquals(1, items.size());
+    CallRecordingItem malformed = find(items, directory.getName());
+    assertEquals(CallRecordingItem.Status.INCOMPLETE, malformed.status);
+    assertTrue(malformed.hasLocal);
+    assertTrue(malformed.hasRemote);
+    assertTrue(malformed.hasMixed);
+  }
+
+  @Test
+  public void canonicalAncestorAliasDoesNotHideLegitimateSession () throws Exception {
+    File physicalFiles = temporary.newFolder("physical-files");
+    File physicalCalls = new File(physicalFiles, "calls");
+    assertTrue(physicalCalls.mkdir());
+    File aliasedFiles = new File(temporary.getRoot(), "files-alias");
+    Files.createSymbolicLink(aliasedFiles.toPath(), physicalFiles.toPath());
+    File aliasedCalls = new File(aliasedFiles, "calls");
+    assertNotEquals(aliasedCalls.getAbsolutePath(), aliasedCalls.getCanonicalPath());
+
+    File directory = new File(physicalCalls, "2026-09-14_11-11-08_5");
+    assertTrue(directory.mkdir());
+    tracks(directory, "local.opus", "remote.opus", "mixed.opus");
+
+    CallRecordingRepository aliasedRepository = new CallRecordingRepository(
+      aliasedCalls, new File(temporary.getRoot(), "aliased-exports"), TEST_PID);
+    List<CallRecordingItem> items = aliasedRepository.scanNow();
+    assertEquals(1, items.size());
+    CallRecordingItem item = find(items, directory.getName());
+    assertEquals(CallRecordingItem.Status.INCOMPLETE, item.status);
+    assertTrue(item.hasLocal);
+    assertTrue(item.hasRemote);
+    assertTrue(item.hasMixed);
+  }
+
+  @Test
   public void scansOneThousandRecordingsWithoutReadingAudio () throws Exception {
     for (int i = 0; i < 1000; i++) {
       File directory = session(String.format("2026-01-01_00-00-%02d_%04d", i % 60, i));

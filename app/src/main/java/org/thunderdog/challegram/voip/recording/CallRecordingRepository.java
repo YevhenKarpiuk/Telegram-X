@@ -540,9 +540,10 @@ public final class CallRecordingRepository {
   }
 
   private static File safeChild (File directory, String fixedName) throws IOException {
-    File unresolved = new File(directory, fixedName).getAbsoluteFile();
+    File canonicalDirectory = directory.getCanonicalFile();
+    File unresolved = new File(canonicalDirectory, fixedName).getAbsoluteFile();
     File child = unresolved.getCanonicalFile();
-    if (!child.getParentFile().equals(directory.getCanonicalFile())) {
+    if (!child.getParentFile().equals(canonicalDirectory)) {
       throw new IOException("Unsafe recording child path");
     }
     if (!child.equals(unresolved)) {

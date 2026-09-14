@@ -327,8 +327,8 @@ android {
 
     // Recorder release identity is independent from Telegram X's update-sensitive
     // Android versionCode/versionName scheme.
-    buildConfigInt("TGXR_RELEASE_VERSION", 1)
-    buildConfigString("TGXR_RELEASE_NAME", "1.0")
+    buildConfigInt("TGXR_RELEASE_VERSION", 2)
+    buildConfigString("TGXR_RELEASE_NAME", "1.0.1")
 
     buildConfigString("JNI_VERSION", config.nativeLibraryVersion)
     buildConfigString("LEVELDB_VERSION", config.leveldbVersion)
@@ -753,7 +753,15 @@ android {
 
       variant.outputs.forEach { output ->
         baseVersionCode = output.versionCode.get()
-        val modifiedVersionCode = baseVersionCode * 1000 + flavorVersionCode
+        // v1.0.1 must sort after the published recorder v1.0 ARM64 release
+        // (1808302), while retaining Telegram X's base-version semantics.
+        val modifiedVersionCode = if (
+          config.applicationId == "ka.soft.tgxr" && variant.name == "latestArm64Release"
+        ) {
+          1808303
+        } else {
+          baseVersionCode * 1000 + flavorVersionCode
+        }
         output.versionCode.set(modifiedVersionCode)
 
         baseVersionName = output.versionName.get()

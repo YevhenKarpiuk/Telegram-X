@@ -5,7 +5,7 @@ feature is local recording of ordinary one-to-one Telegram calls.
 
 - **Application name:** Telegram X Recorder
 - **Package:** `ka.soft.tgxr`
-- **Recorder release:** `1.0`
+- **Recorder release:** `1.0.1`
 - **Current public build:** ARM64-v8a
 
 ## Call recording
@@ -17,6 +17,14 @@ For ordinary Telegram 1:1 calls, the recorder can produce:
 - `mixed.opus` — both sides mixed into a conversation recording.
 
 Group calls / Voice Chats are not supported yet.
+
+## v1.0.1 bug fix
+
+This release fixes a recording-discovery issue caused by Android canonical path
+aliases: `/data/user/0` may canonicalize to `/data/data`. Existing recordings
+that were hidden by this mismatch become visible after updating. The
+containment and symlink protections remain in place; tgcalls and the native
+recorder are unchanged. See [v1.0.1 release notes](docs/RELEASE_NOTES_V1_0_1.md).
 
 Recording can start automatically or be controlled manually with **Start**,
 **Pause**, **Resume**, **Stop**, and **Restart** within the current call

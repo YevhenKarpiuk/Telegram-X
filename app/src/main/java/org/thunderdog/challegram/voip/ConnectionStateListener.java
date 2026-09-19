@@ -18,6 +18,7 @@ import androidx.annotation.Nullable;
 
 import org.thunderdog.challegram.voip.annotation.AudioState;
 import org.thunderdog.challegram.voip.annotation.CallState;
+import org.thunderdog.challegram.voip.annotation.CallRecordingState;
 import org.thunderdog.challegram.voip.annotation.VideoState;
 
 public interface ConnectionStateListener {
@@ -36,4 +37,11 @@ public interface ConnectionStateListener {
   default void onGroupCallKeySent () { }
 
   default void onCallUpgradeRequestReceived () { }
+
+  default void onCallRecordingStateChanged (
+    VoIPInstance context,
+    @CallRecordingState int state,
+    long elapsedSamples,
+    boolean autoRecordingEnabled
+  ) { }
 }

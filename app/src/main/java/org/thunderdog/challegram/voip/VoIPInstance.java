@@ -22,6 +22,8 @@ import androidx.annotation.NonNull;
 import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.voip.annotation.CallNetworkType;
+import org.thunderdog.challegram.voip.annotation.CallRecordingOutputMode;
+import org.thunderdog.challegram.voip.annotation.CallRecordingState;
 import org.thunderdog.challegram.voip.annotation.CallState;
 
 import me.vkryl.core.lambda.Destroyable;
@@ -118,6 +120,23 @@ public abstract class VoIPInstance implements Destroyable {
 
   public abstract String getLibraryName ();
   public abstract String getLibraryVersion ();
+
+  public @CallRecordingState int getCallRecordingState () {
+    return CallRecordingState.UNSUPPORTED;
+  }
+
+  public long getCallRecordingElapsedSamples () {
+    return 0;
+  }
+
+  public boolean isAutoCallRecordingEnabled () {
+    return configuration.autoRecordingEnabled;
+  }
+
+  public void startCallRecording (@CallRecordingOutputMode int outputMode) { }
+  public void pauseCallRecording () { }
+  public void resumeCallRecording () { }
+  public void stopCallRecording () { }
 
   // called from native code
 

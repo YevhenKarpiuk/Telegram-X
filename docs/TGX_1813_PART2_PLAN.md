@@ -129,3 +129,20 @@ Risk: **MEDIUM**. The textual change is small, but source availability and targe
 - Files: none beyond verified fixes.
 - Expected change: run `assembleLatestArm64Debug`, require `BUILD SUCCESSFUL`, and locate the generated APK.
 - Danger/invariant: preserve calling behavior and report failures without hiding them; do not create a release build.
+
+## PART 2 implementation report
+
+- Base: Telegram X `9312ace35291f68fdd66ddff348d7321bee2a4bd` (`0.29.0.1813`).
+- Native dependencies: tgcalls `8010b9b7d85eeff024a21869826c7b8e1d2906b0`; WebRTC `6ecff4f2446ff7d4ce38ca1c764f023e44dbcb1b` (unchanged).
+- Added unchanged Recorder v1.0.1 sources: `CallRecorder.cpp/.h` and `recorder/RecorderTgCallsAdapter.cpp/.h`.
+- Adapted 1813 files: native CMake, `tgvoip.cpp`, `CallConfiguration`, `VoIP`, `TgCallsController`, `VoIPInstance`, `ConnectionStateListener`, and the minimal Recorder settings storage API. Added the two small recording annotations.
+- CMake adds the two Recorder translation units and links `opus`/`ogg`, while retaining the 1813 multi-config linker flags and 16 KB alignment. No legacy libtgvoip target or build script was restored.
+- `tgvoip.cpp` retains 1813 `sharedJVM`, `DoWithJNI`, registrations, descriptor construction, and `Meta::Create` flow. Recorder metadata/controller ownership, hook wiring, state callback, and JNI controls were added in place.
+- Teardown calls `beginFinishCall()` before `tgcalls::stop`; the compatibility tgcalls stop path destroys its internal callback owners via `ThreadLocalObject::reset`, then invokes completion; completion calls `finishCall()` before Java stop delivery and context destruction.
+- Recording versions remain exactly `7.0.0`, `8.0.0`, `9.0.0`, `12.0.0`, and `13.0.0`.
+- Recorder Firebase configuration was restored from v1.0.1 because the 1813 upstream client does not match the Recorder application ID. No release version/name was changed.
+- First build error: Google Services had no client for the Recorder application ID. Replacing only the tracked configuration with the exact Recorder v1.0.1 version resolved it.
+- Final command: `./gradlew assembleLatestArm64Debug --console=plain` — `BUILD SUCCESSFUL`.
+- APK: `app/build/outputs/apk/latestArm64/debug/Telegram-X-Recorder-0.29.0.1813-arm64-v8a-debug.apk`.
+- No matching `ApplicationIdentityTest`, `CallForegroundStateMachineTest`, or Recorder foundation unit tests are present in the PART 2 tree, so no separate unit-test task was run. Runtime validation was not performed.
+- PART 3 remains responsible for call controls/UI, settings UI, recording repository/browser/details, playback, and share/save/ZIP flows.

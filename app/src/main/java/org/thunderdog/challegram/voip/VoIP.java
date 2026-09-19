@@ -27,8 +27,11 @@ import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BuildConfig;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.N;
+import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.unsorted.Settings;
 import org.thunderdog.challegram.voip.annotation.CallNetworkType;
+import org.webrtc.ContextUtils;
 
 import java.io.File;
 import java.lang.annotation.Retention;
@@ -356,6 +359,16 @@ public class VoIP {
     int bufferSize = getNativeBufferSize(context);
   }
 
+  private static @Nullable String getCallRecordingBasePath () {
+    try {
+      Context context = ContextUtils.getApplicationContext();
+      File directory = context != null ? context.getFilesDir() : null;
+      return directory != null ? directory.getAbsolutePath() : null;
+    } catch (RuntimeException ignored) {
+      return null;
+    }
+  }
+
   public static VoIPInstance instantiateAndConnect (
     Tdlib tdlib,
     TdApi.Call call,
@@ -382,11 +395,19 @@ public class VoIP {
 
     final boolean preferSystemAcousticEchoCanceler = VoIPServerConfig.getBoolean("use_system_aec", true);
     final boolean preferSystemNoiseSuppressor = VoIPServerConfig.getBoolean("use_system_ns", true);
+    final TdApi.User recordingUser = tdlib.cache().user(call.userId);
+    final String recordingDisplayName = recordingUser != null ? TD.getUserName(recordingUser) : "";
 
     // These do not change during the call
     final CallConfiguration configuration = new CallConfiguration(
       stateReady,
       call.isOutgoing,
+      call.id,
+      call.userId,
+      recordingDisplayName,
+      getCallRecordingBasePath(),
+      Settings.instance().isAutoRecordingCallsEnabled(),
+      Settings.instance().getCallRecordingOutputMode(),
 
       persistentStateFile,
       logFiles != null ? logFiles.logFile : null,

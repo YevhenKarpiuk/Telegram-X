@@ -15,6 +15,10 @@
 
 #include <jni_utils.h>
 #include "bridge.h"
+#include "CallRecorder.h"
+#include "recorder/RecorderTgCallsAdapter.h"
+
+#include <android/log.h>
 
 #ifndef DISABLE_TGCALLS
 #include <modules/utility/include/jvm_android.h>
@@ -32,6 +36,7 @@
 #include <platform/android/AndroidContext.h>
 
 #include <utility>
+#include <atomic>
 #include <jni.h>
 
 #else
@@ -96,6 +101,28 @@ void telegram_aes_cbc_decrypt(uint8_t* in, uint8_t* out, size_t length, uint8_t*
 }
 #endif
 #endif
+
+namespace {
+
+constexpr char kCallRecorderLogTag[] = "TGX-CallRecorder";
+
+const char *callStateName(tgcalls::State state) noexcept {
+  switch (state) {
+    case tgcalls::State::WaitInit:
+      return "WaitInit";
+    case tgcalls::State::WaitInitAck:
+      return "WaitInitAck";
+    case tgcalls::State::Established:
+      return "Established";
+    case tgcalls::State::Failed:
+      return "Failed";
+    case tgcalls::State::Reconnecting:
+      return "Reconnecting";
+  }
+  return "Unknown";
+}
+
+} // namespace
 
 namespace tgcalls {
   bool isInitialized = false;
@@ -416,7 +443,27 @@ public:
 struct TgCallsContext {
   std::unique_ptr<tgcalls::Instance> tgcalls;
   std::shared_ptr<JniWrapper> javaController;
+  std::shared_ptr<tgx::call_recording::CallRecordingController>
+      recordingController;
+  std::atomic<bool> stopStarted = {false};
 };
+
+bool supportsCallRecording (const std::string &version) {
+  return version == "7.0.0" || version == "8.0.0" ||
+      version == "9.0.0" || version == "12.0.0" ||
+      version == "13.0.0";
+}
+
+tgx::call_recording::OutputMode toRecordingOutputMode(jint value) noexcept {
+  switch (value) {
+    case 1:
+      return tgx::call_recording::OutputMode::MixedOnly;
+    case 2:
+      return tgx::call_recording::OutputMode::SeparateOnly;
+    default:
+      return tgx::call_recording::OutputMode::MixedAndSeparate;
+  }
+}
 
 jbyteArray toJavaByteArray (JNIEnv *env, const std::vector<uint8_t> &data) {
   auto size = (jsize) data.size();
@@ -475,6 +522,32 @@ JNI_OBJECT_FUNC(jlong, voip_TgCallsController, newInstance,
   env->ReleaseByteArrayElements(jEncryptionKey, (jbyte *) jEncryptionKeyData, JNI_ABORT);
 
   bool isOutgoingCall = configuration.getBoolean("isOutgoing") == JNI_TRUE;
+  auto callId = (int64_t) configuration.getLong("callId");
+  const auto recordingUserId =
+      static_cast<int64_t>(configuration.getLong("recordingUserId"));
+  std::string recordingDisplayName = jni::from_jstring(
+      env, configuration.getString("recordingDisplayName"));
+  std::string recordingBasePath = jni::from_jstring(
+      env, configuration.getString("recordingBasePath"));
+  const bool autoRecordingEnabled =
+      configuration.getBoolean("autoRecordingEnabled") == JNI_TRUE;
+  const auto initialRecordingOutputMode = toRecordingOutputMode(
+      configuration.getInt("recordingOutputMode"));
+  const auto recorderHookCapabilities =
+      tgx::call_recording::CurrentRecorderHookCapabilities();
+  const auto recorderIntegrationSupport =
+      tgx::call_recording::EvaluateRecorderIntegrationSupport(
+          supportsCallRecording(version), recorderHookCapabilities);
+  const bool recordingSupported = recorderIntegrationSupport ==
+      tgx::call_recording::RecorderIntegrationSupport::Supported;
+  __android_log_print(
+      ANDROID_LOG_INFO,
+      kCallRecorderLogTag,
+      "newInstance version=%s supported=%s callId=%lld basePath=%s",
+      version.c_str(),
+      recordingSupported ? "true" : "false",
+      static_cast<long long>(callId),
+      recordingBasePath.c_str());
 
   // tgcalls::Endpoint
 
@@ -589,6 +662,41 @@ JNI_OBJECT_FUNC(jlong, voip_TgCallsController, newInstance,
   }
 
   std::shared_ptr<JniWrapper> javaController = std::make_shared<JniWrapper>(env, thiz, tgcalls::javaTgCallsController);
+  auto recordingController =
+      tgx::call_recording::CallRecordingController::Create(
+          std::move(recordingBasePath),
+          tgx::call_recording::CallMetadata {
+              .callId = callId,
+              .userId = recordingUserId,
+              .displayName = std::move(recordingDisplayName),
+              .isOutgoing = isOutgoingCall
+          },
+          recordingSupported,
+          autoRecordingEnabled,
+          initialRecordingOutputMode,
+          [javaController](
+              tgx::call_recording::RecordingState state,
+              int64_t elapsedSamples,
+              bool autoEnabled,
+              const std::string &sessionId) {
+            javaController->runSafely(
+                [javaController, state, elapsedSamples, autoEnabled, sessionId](
+                    JNIEnv *env) {
+                  jmethodID methodId = env->GetMethodID(
+                      tgcalls::javaTgCallsController,
+                      "handleCallRecordingStateChanged",
+                      "(IJZLjava/lang/String;)V");
+                  jstring javaSessionId = env->NewStringUTF(sessionId.c_str());
+                  env->CallVoidMethod(
+                      javaController->thiz,
+                      methodId,
+                      static_cast<jint>(state),
+                      static_cast<jlong>(elapsedSamples),
+                      autoEnabled ? JNI_TRUE : JNI_FALSE,
+                      javaSessionId);
+                  env->DeleteLocalRef(javaSessionId);
+                });
+          });
 
   tgcalls::Descriptor descriptor = {
     .version = version,
@@ -624,7 +732,16 @@ JNI_OBJECT_FUNC(jlong, voip_TgCallsController, newInstance,
       isOutgoingCall
     ),
     .videoCapture = nullptr,
-    .stateUpdated = [javaController](tgcalls::State state) {
+    .stateUpdated = [javaController, recordingController](tgcalls::State state) {
+      __android_log_print(
+          ANDROID_LOG_INFO,
+          kCallRecorderLogTag,
+          "state=%s",
+          callStateName(state));
+      if (state == tgcalls::State::Established &&
+          recordingController != nullptr) {
+        recordingController->onEstablished();
+      }
       javaController->runSafely([javaController, state](JNIEnv *env) {
         jint javaState = toJavaCallState(env, state);
         javaController->callVoid(env, "handleStateChange", javaState);
@@ -658,6 +775,11 @@ JNI_OBJECT_FUNC(jlong, voip_TgCallsController, newInstance,
     }
   };
 
+  if (recordingSupported && recordingController != nullptr) {
+    tgx::call_recording::ConfigureRecorderTgCallsHooks(
+        descriptor, recordingController);
+  }
+
   // tgcalls::Proxy
   jobject jProxy = configuration.getRawObject("proxy", "Lorg/thunderdog/challegram/voip/Socks5Proxy;");
   if (jProxy != nullptr) {
@@ -678,11 +800,16 @@ JNI_OBJECT_FUNC(jlong, voip_TgCallsController, newInstance,
 
   auto *context = new TgCallsContext;
   context->javaController = javaController;
+  context->recordingController = recordingController;
   context->tgcalls = tgcalls::Meta::Create(version, std::move(descriptor));
   context->tgcalls->setNetworkType(networkType);
   context->tgcalls->setAudioOutputGainControlEnabled(audioOutputGainControlEnabled);
   context->tgcalls->setEchoCancellationStrength(echoCancellationStrength);
   context->tgcalls->setMuteMicrophone(muteMicrophone);
+
+  if (recordingController != nullptr) {
+    recordingController->notifyInitialState();
+  }
 
   return jni::ptr_to_jlong(context);
 }
@@ -772,16 +899,66 @@ JNI_OBJECT_FUNC(void, voip_TgCallsController, fetchNetworkStats, jlong ptr, jobj
   }
 }
 
+JNI_OBJECT_FUNC(void, voip_TgCallsController, startCallRecording, jlong ptr, jint outputMode) {
+  auto context = jni::jlong_to_ptr<TgCallsContext *>(ptr);
+  if (context != nullptr && context->recordingController != nullptr) {
+    context->recordingController->start(toRecordingOutputMode(outputMode));
+  }
+}
+
+JNI_OBJECT_FUNC(void, voip_TgCallsController, pauseCallRecording, jlong ptr) {
+  auto context = jni::jlong_to_ptr<TgCallsContext *>(ptr);
+  if (context != nullptr && context->recordingController != nullptr) {
+    context->recordingController->pause();
+  }
+}
+
+JNI_OBJECT_FUNC(void, voip_TgCallsController, resumeCallRecording, jlong ptr) {
+  auto context = jni::jlong_to_ptr<TgCallsContext *>(ptr);
+  if (context != nullptr && context->recordingController != nullptr) {
+    context->recordingController->resume();
+  }
+}
+
+JNI_OBJECT_FUNC(void, voip_TgCallsController, stopCallRecording, jlong ptr) {
+  auto context = jni::jlong_to_ptr<TgCallsContext *>(ptr);
+  if (context != nullptr && context->recordingController != nullptr) {
+    context->recordingController->stop();
+  }
+}
+
+JNI_OBJECT_FUNC(jlong, voip_TgCallsController, callRecordingElapsedSamples, jlong ptr) {
+  auto context = jni::jlong_to_ptr<TgCallsContext *>(ptr);
+  if (context != nullptr && context->recordingController != nullptr) {
+    return static_cast<jlong>(
+        context->recordingController->elapsedSamples());
+  }
+  return 0;
+}
+
 JNI_OBJECT_FUNC(void, voip_TgCallsController, destroyInstance, jlong ptr) {
   auto context = jni::jlong_to_ptr<TgCallsContext *>(ptr);
   if (context == nullptr) {
     return;
   }
+  bool expected = false;
+  if (!context->stopStarted.compare_exchange_strong(expected, true)) {
+    return;
+  }
+  if (context->recordingController != nullptr) {
+    context->recordingController->beginFinishCall();
+  }
   if (context->tgcalls == nullptr) {
+    if (context->recordingController != nullptr) {
+      context->recordingController->finishCall();
+    }
     delete context;
     return;
   }
   context->tgcalls->stop([context](const tgcalls::FinalState& finalState) {
+    if (context->recordingController != nullptr) {
+      context->recordingController->finishCall();
+    }
     DoWithJNI([context, finalState](JNIEnv *env) {
 
       jobject jConfiguration = context->javaController->getObject(env, "configuration", "Lorg/thunderdog/challegram/voip/CallConfiguration;");

@@ -37,6 +37,8 @@ set(TGCALLS_LIB "tgcallsjni")
 # "${WEBRTC_DIR}/sdk/android/src/jni/dav1d_codec.cc"
 
 add_library(${TGCALLS_LIB} SHARED
+  CallRecorder.cpp
+  recorder/RecorderTgCallsAdapter.cpp
   tgvoip.cpp
 
   "${WEBRTC_DIR}/sdk/android/native_api/audio_device_module/audio_device_android.cc"
@@ -181,6 +183,8 @@ endif()
 target_link_libraries(${TGCALLS_LIB}
   jni-utils
   tgcalls
+  opus
+  ogg
 )
 
 target_link_libraries(${TGCALLS_LIB}

@@ -19,6 +19,10 @@ plugins {
 }
 
 val config = tgxConfig.config.get()
+val recorderApplicationId = "ka.soft.tgxr"
+val recorderReleaseVersion = 3
+val recorderReleaseName = "1.1.0"
+val isRecorderBuild = config.applicationId == recorderApplicationId
 val generateBaselineProfile = tgxConfig.generateBaselineProfile.get()
 val useLegacyNdk = tgxConfig.useLegacyNdk.get()
 val appliedNdkVersion = if (useLegacyNdk) {
@@ -331,6 +335,9 @@ android {
     buildConfigString("AMAZON_APPSTORE_URL", config.amazonAppStoreUrl)
 
     buildConfigString("TGX_EXTENSION", config.extension)
+
+    buildConfigInt("TGXR_RELEASE_VERSION", recorderReleaseVersion)
+    buildConfigString("TGXR_RELEASE_NAME", recorderReleaseName)
 
     buildConfigString("JNI_VERSION", config.nativeLibraryVersion)
     buildConfigString("LEVELDB_VERSION", config.leveldbVersion)
@@ -766,10 +773,15 @@ android {
         output.versionCode.set(modifiedVersionCode)
 
         baseVersionName = output.versionName.get()
-        val modifiedVersionName = "$baseVersionName.$baseVersionCode$flavorVersionNameSuffix"
+        val modifiedVersionName = if (isRecorderBuild) {
+          "$recorderReleaseName$flavorVersionNameSuffix"
+        } else {
+          "$baseVersionName.$baseVersionCode$flavorVersionNameSuffix"
+        }
         output.versionName.set(modifiedVersionName)
 
-        fileName = "${config.outputFileNamePrefix}-${modifiedVersionName.replace(Regex("-universal(?=-|$)"), "")}"
+        val artifactVersionName = if (isRecorderBuild) "v$modifiedVersionName" else modifiedVersionName
+        fileName = "${config.outputFileNamePrefix}-${artifactVersionName.replace(Regex("-universal(?=-|$)"), "")}"
         if (output is VariantOutputImpl) {
           output.outputFileName.set("$fileName.apk")
         }

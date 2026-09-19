@@ -180,3 +180,20 @@ Risk: **MEDIUM**. The textual change is small, but source availability and targe
 - Final build: `./gradlew assembleLatestArm64Debug --console=plain` — `BUILD SUCCESSFUL` (301 actionable tasks).
 - APK: `app/build/outputs/apk/latestArm64/debug/Telegram-X-Recorder-0.29.0.1813-arm64-v8a-debug.apk`.
 - Remaining PART 5: final Recorder version/versionCode, production signing/release build, release validation, tag, and release publication. Runtime validation of PART 4 UI/playback/export flows is still required.
+
+## PART 5.1 runtime validation
+
+- Device runtime validation A–M passed for the migrated Recorder flow.
+- Verified call recording controls and state transitions, recordings browser/details, mixed/local/remote playback, Share, SAF Save, ZIP export, confirmed Delete, and active-session protection.
+- Verified manual and automatic recording, all three output modes, interrupted/crash recovery, incoming calls from background/locked screen, and reconnect without a second recording session or timer reset.
+
+## PART 5.2 versioning
+
+- Recorder release identity is `TGXR_RELEASE_VERSION = 3` and `TGXR_RELEASE_NAME = "1.1.0"`; Telegram X upstream base remains `0.29.0.1813` (`version.app=1813`).
+- Android versionCode keeps the project formula. `latestArm64Debug` is `1813 * 1000 + 0 = 1813000`; the future `latestArm64Release` is `1813 * 1000 + (LATEST 3 * 100 + ARM64 2) = 1813302`. The release value is deterministic, greater than the previous Recorder `1808303`, and needs no one-off override.
+- Package remains `ka.soft.tgxr`; application/product label remains `Telegram X Recorder`. Firebase configuration and signing configuration were not changed.
+- Recorder artifacts now use the independent version name while retaining variant suffixes. The verified debug name is `Telegram-X-Recorder-v1.1.0-arm64-v8a-debug.apk`; the prepared release name is `Telegram-X-Recorder-v1.1.0-arm64-v8a.apk`.
+- `ApplicationIdentityTest` now covers applicationId/provider authority, product name, Recorder release integer/name, and a versionCode newer than `1808303`. Together with `CallRecordingRepositoryTest` and `CallForegroundStateMachineTest`, all tests passed (`BUILD SUCCESSFUL`, 157 actionable tasks).
+- `./gradlew assembleLatestArm64Debug --console=plain` passed (`BUILD SUCCESSFUL`, 301 actionable tasks).
+- Both `output-metadata.json` and `/home/ka/Android/Sdk/build-tools/37.0.0/aapt dump badging` confirm debug package `ka.soft.tgxr`, versionCode `1813000`, versionName `1.1.0-arm64-v8a-debug`, label `Telegram X Recorder`, and native ABI `arm64-v8a`.
+- PART 5.3 remains responsible for production signing, final release build and artifact verification, tag, push, and release publication. None was performed in PART 5.2.

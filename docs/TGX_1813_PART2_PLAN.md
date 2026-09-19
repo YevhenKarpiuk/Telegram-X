@@ -197,3 +197,18 @@ Risk: **MEDIUM**. The textual change is small, but source availability and targe
 - `./gradlew assembleLatestArm64Debug --console=plain` passed (`BUILD SUCCESSFUL`, 301 actionable tasks).
 - Both `output-metadata.json` and `/home/ka/Android/Sdk/build-tools/37.0.0/aapt dump badging` confirm debug package `ka.soft.tgxr`, versionCode `1813000`, versionName `1.1.0-arm64-v8a-debug`, label `Telegram X Recorder`, and native ABI `arm64-v8a`.
 - PART 5.3 remains responsible for production signing, final release build and artifact verification, tag, push, and release publication. None was performed in PART 5.2.
+
+## PART 5.3A release build
+
+- Production signing configuration was available. No signing files, credentials, or `local.properties` contents were printed or changed.
+- Required tests: `./gradlew :app:testLatestArm64DebugUnitTest --tests org.thunderdog.challegram.voip.recording.CallRecordingRepositoryTest --tests org.thunderdog.challegram.service.CallForegroundStateMachineTest --tests org.thunderdog.challegram.ApplicationIdentityTest --rerun-tasks --console=plain` — `BUILD SUCCESSFUL` (157 actionable tasks, all executed).
+- Release build: `./gradlew assembleLatestArm64Release --console=plain` — `BUILD SUCCESSFUL` (325 actionable tasks; 13 executed, 312 up-to-date).
+- APK: `app/build/outputs/apk/latestArm64/release/Telegram-X-Recorder-v1.1.0-arm64-v8a.apk` (57,704,153 bytes).
+- APK metadata from build-tools 37 `aapt`: package `ka.soft.tgxr`; versionCode `1813302`; versionName `1.1.0-arm64-v8a`; application label `Telegram X Recorder`; native code `arm64-v8a`.
+- Signature verification from build-tools 37 `apksigner --verbose --print-certs`: PASS (`Verifies`, one signer, APK Signature Scheme v2 and v3). The v1.1.0 signer certificate SHA-256 is `9d7945562d0596fac43c0306d6bab071d8d7cb919cc7e3fa7f5d4438ecffcbd4`.
+- Previous production signer reference: official non-draft, non-prerelease GitHub release `tgxr-v1.0.1`, asset `Telegram-X-Recorder-v1.0.1-arm64-v8a.apk`. Its downloaded SHA-256 `8c13e39a1c70930ea45036b74fa7abf22b4d69c02f671a3cd86d18c11d895a91` matched the release `SHA256SUMS.txt`. Its signer certificate SHA-256 is `9d7945562d0596fac43c0306d6bab071d8d7cb919cc7e3fa7f5d4438ecffcbd4`; signer match: YES.
+- APK zip alignment: PASS with build-tools 37 `zipalign -c -P 16 -v 4` (`Verification successful`). Native ELF alignment: PASS; NDK 27 `llvm-objdump -p` reported `LOAD align 2**14` for every packaged native library, including `libtgcallsjni.so` and `libtgxjni.so`.
+- APK content audit: PASS. The archive contains the expected manifest, dex, resources, and arm64 native libraries. The only native ABI root is `arm64-v8a`. No keystore, signing property file, `local.properties`, `.git`, `.vscode`, stale libtgvoip tree, or private-key/credential file name was present.
+- Release APK SHA-256: `d586c9a82e95077b1bfb8c418fb2821ed82902eeb83d96b461844af165b3e84f`.
+- Release invariants: tgcalls `8010b9b7d85eeff024a21869826c7b8e1d2906b0`; WebRTC `6ecff4f2446ff7d4ce38ca1c764f023e44dbcb1b`; Recorder supported versions remain exactly `7.0.0`, `8.0.0`, `9.0.0`, `12.0.0`, and `13.0.0`; legacy libtgvoip restored: NO; native Recorder code changed during PART 5.3A: NO.
+- Device installation and PART 5.3B validation were not performed. No publication, tag, push, or branch change was performed.

@@ -265,7 +265,7 @@
     <service
       android:name=".service.TGCallService"
       android:exported="false"
-      android:foregroundServiceType="phoneCall|microphone|mediaPlayback" />
+      android:foregroundServiceType="microphone|shortService" />
     <receiver android:name=".receiver.VoIPMediaButtonReceiver"
       android:exported="false">
       <intent-filter>
@@ -306,9 +306,9 @@
       android:enabled="true"
       android:exported="false">
       <intent-filter>
-        <action android:name="org.thunderdog.challegram.END_CALL" />
-        <action android:name="org.thunderdog.challegram.DECLINE_CALL" />
-        <action android:name="org.thunderdog.challegram.ANSWER_CALL" />
+        <action android:name="${applicationId}.END_CALL" />
+        <action android:name="${applicationId}.DECLINE_CALL" />
+        <action android:name="${applicationId}.ANSWER_CALL" />
       </intent-filter>
     </receiver>
 

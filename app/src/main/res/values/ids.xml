@@ -954,6 +954,15 @@
   <item type="id" name="btn_otherChats" />
   <item type="id" name="btn_otherFiles" />
   <item type="id" name="btn_confirmCalls" />
+  <item type="id" name="btn_autoRecordCalls" />
+  <item type="id" name="btn_callRecordingOutput" />
+  <item type="id" name="btn_callRecordingMixedAndSeparate" />
+  <item type="id" name="btn_callRecordingMixedOnly" />
+  <item type="id" name="btn_callRecordingSeparateOnly" />
+  <item type="id" name="btn_callRecordingStart" />
+  <item type="id" name="btn_callRecordingPause" />
+  <item type="id" name="btn_callRecordingResume" />
+  <item type="id" name="btn_callRecordingStop" />
   <item type="id" name="btn_incognitoMode" />
   <item type="id" name="btn_submitCrash" />
   <item type="id" name="btn_clearAllDrafts" />

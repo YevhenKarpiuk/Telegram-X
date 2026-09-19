@@ -162,3 +162,21 @@ Risk: **MEDIUM**. The textual change is small, but source availability and targe
 - Final build: `./gradlew assembleLatestArm64Debug --console=plain` — `BUILD SUCCESSFUL` (301 actionable tasks).
 - APK: `app/build/outputs/apk/latestArm64/debug/Telegram-X-Recorder-0.29.0.1813-arm64-v8a-debug.apk`.
 - Remaining PART 4: repository/browser/details integration, playback, share/save/ZIP/delete, recordings list/settings entry, and crash-recovery UI. None was started in PART 3. Runtime validation was not performed.
+
+## PART 4 implementation report
+
+- Base: completed PART 3 at `51e7788ea2286a308bee3f218cd0d92d461300eb` on `upgrade/tgx-0.29.0.1813`. No native Recorder, tgcalls, WebRTC, timeline, or call-control code was changed.
+- Added unchanged production Recorder v1.0.1 implementations: `CallRecordingRepository`, `CallRecordingItem`, `CallRecordingActiveSessions`, `CallRecordingsController`, `CallRecordingDetailsController`, and `CallRecordingRepositoryTest`.
+- Repository discovery reads existing `info.json` and recovery `info.json.tmp`, tolerates missing/malformed/partial metadata and optional tracks, infers legacy values where needed, sorts newest first, and represents active, interrupted, failed, incomplete, and completed sessions without mutating source recordings.
+- Canonical paths: roots and children are compared after canonicalization, preserving valid Android `/data/user/0` to `/data/data` aliases. Direct-session containment, fixed-name `safeChild` validation, symlink rejection, and canonical recursive-delete bounds remain intact.
+- Active native session IDs are registered from the existing recording callback in `TgCallsController`. Active recordings are shown as in progress and cannot be played, exported, or deleted; a stale `.in_progress` marker is recovered as `INTERRUPTED` after process loss.
+- Settings now includes the production Recordings entry, which opens the asynchronous list controller. The list supports empty state, user/metadata/status display, detail navigation, and refresh on focus after deletion.
+- Details expose only physically present playable `mixed.opus`, `local.opus`, and `remote.opus` tracks. Production `MediaPlayer` playback switches/release cleanly, requests audio focus, and is disabled for active recordings or while a call service exists.
+- Share prepares private cache exports and grants a `content://` FileProvider URI with read permission. Save uses `ACTION_CREATE_DOCUMENT` and `ContentResolver`; no broad storage permission was added.
+- ZIP streams only existing playable track files plus `info.json`. Per-export private cache directories are unique; stale cleanup is age- and ownership-scoped. Original recording files are never modified.
+- Delete retains confirmation UI and performs asynchronous, active-session-blocked, canonical bounded deletion. Partial failure returns an error and refreshes the list without following symlinks outside the session.
+- FileProvider already used `${applicationId}.provider`; only the narrow `call_recording_exports/` cache path was added. The adapted identity test verifies `ka.soft.tgxr` and the derived provider authority. Production release-version assertions were intentionally left for PART 5.
+- Tests: `CallRecordingRepositoryTest`, `CallForegroundStateMachineTest`, and `ApplicationIdentityTest` passed together with `--rerun-tasks` (`BUILD SUCCESSFUL`, 157 actionable tasks). Coverage includes output modes/files, malformed and recovery states, canonical alias, symlinks, active sessions, safe delete, export/ZIP/cache behavior, ordering, and a 1000-recording scan.
+- Final build: `./gradlew assembleLatestArm64Debug --console=plain` — `BUILD SUCCESSFUL` (301 actionable tasks).
+- APK: `app/build/outputs/apk/latestArm64/debug/Telegram-X-Recorder-0.29.0.1813-arm64-v8a-debug.apk`.
+- Remaining PART 5: final Recorder version/versionCode, production signing/release build, release validation, tag, and release publication. Runtime validation of PART 4 UI/playback/export flows is still required.

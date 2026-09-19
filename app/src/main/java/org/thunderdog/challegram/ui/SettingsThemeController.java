@@ -633,6 +633,8 @@ public class SettingsThemeController extends RecyclerViewController<SettingsThem
       items.add(new ListItem(ListItem.TYPE_RADIO_SETTING, R.id.btn_autoRecordCalls, 0, R.string.AutoRecordCalls));
       items.add(new ListItem(ListItem.TYPE_SEPARATOR_FULL));
       items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_callRecordingOutput, 0, R.string.CallRecordingFiles));
+      items.add(new ListItem(ListItem.TYPE_SEPARATOR_FULL));
+      items.add(new ListItem(ListItem.TYPE_SETTING, R.id.btn_callRecordings, 0, R.string.CallRecordings));
       items.add(new ListItem(ListItem.TYPE_SHADOW_BOTTOM));
       items.add(new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, R.string.CallRecordingSettingsDesc));
 
@@ -1244,6 +1246,8 @@ public class SettingsThemeController extends RecyclerViewController<SettingsThem
         Settings.instance().setCallRecordingOutputMode(newMode);
         adapter.updateValuedSettingById(R.id.btn_callRecordingOutput);
       }).setAllowResize(false));
+    } else if (viewId == R.id.btn_callRecordings) {
+      navigateTo(new CallRecordingsController(context, tdlib));
     } else if (viewId == R.id.btn_useInAppBrowser) {
       Settings.instance().setUseInAppBrowser(adapter.toggleView(v));
     } else if (viewId == R.id.btn_switchRtl) {

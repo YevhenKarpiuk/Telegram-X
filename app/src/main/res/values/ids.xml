@@ -963,6 +963,14 @@
   <item type="id" name="btn_callRecordingPause" />
   <item type="id" name="btn_callRecordingResume" />
   <item type="id" name="btn_callRecordingStop" />
+  <item type="id" name="btn_callRecordings" />
+  <item type="id" name="btn_callRecordingExportMixed" />
+  <item type="id" name="btn_callRecordingExportLocal" />
+  <item type="id" name="btn_callRecordingExportRemote" />
+  <item type="id" name="btn_callRecordingExportAll" />
+  <item type="id" name="btn_callRecordingDeleteConfirm" />
+  <item type="id" name="controller_callRecordings" />
+  <item type="id" name="controller_callRecordingDetails" />
   <item type="id" name="btn_incognitoMode" />
   <item type="id" name="btn_submitCrash" />
   <item type="id" name="btn_clearAllDrafts" />

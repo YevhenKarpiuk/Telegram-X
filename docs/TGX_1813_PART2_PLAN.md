@@ -146,3 +146,19 @@ Risk: **MEDIUM**. The textual change is small, but source availability and targe
 - APK: `app/build/outputs/apk/latestArm64/debug/Telegram-X-Recorder-0.29.0.1813-arm64-v8a-debug.apk`.
 - No matching `ApplicationIdentityTest`, `CallForegroundStateMachineTest`, or Recorder foundation unit tests are present in the PART 2 tree, so no separate unit-test task was run. Runtime validation was not performed.
 - PART 3 remains responsible for call controls/UI, settings UI, recording repository/browser/details, playback, and share/save/ZIP flows.
+
+## PART 3 implementation report
+
+- Base: completed PART 2 at `2f9860cf02dc587313efd27b1c64fe79d107af31` on `upgrade/tgx-0.29.0.1813`. The PART 2 native recorder foundation and exact supported-version set (`7.0.0`, `8.0.0`, `9.0.0`, `12.0.0`, `13.0.0`) were not changed.
+- Modified call integration: `TGCallService`, `CallManager`, `CallController`, `AndroidManifest.xml`, and the minimal call-control resources. Added `CallForegroundStateMachine` and its focused unit test.
+- Modified settings integration: `SettingsThemeController` plus the minimal IDs and strings for automatic recording, output mode, recording status, and Start/Pause/Resume/Stop controls. No recordings-list entry or PART 4 UI was added.
+- State propagation: the native `VoIPInstance` remains authoritative. `TGCallService` delegates controls to the existing instance, posts native state callbacks onto the UI thread, and gives a newly attached listener an immediate native state/elapsed-time snapshot. Listener removal and replacement are idempotent.
+- Controls: `IDLE` shows Start; `RECORDING` shows Pause and Stop; `PAUSED` shows Resume and Stop; `INACTIVE` shows Continue, which resumes the same native call recording session. `FAILED`, `UNSUPPORTED`, and `FINALIZED` expose no recording controls and do not affect the call.
+- Timer: `CallController` reuses the existing periodic call UI update path, reads authoritative native `elapsedSamples`, and displays `elapsedSamples / 48000`. No separate timer, thread, or handler was added. Pause time and a resumed Stop-to-Start gap follow the native master timeline; the stopped value remains frozen until continuation.
+- Settings storage remains `calls_auto_record` (default `false`) and `calls_recording_output` (default `MIXED_AND_SEPARATE`). Available output modes are `MIXED_AND_SEPARATE`, `MIXED_ONLY`, and `SEPARATE_ONLY`. Native code snapshots the output mode on the first Start, so later preference changes do not mutate the active session.
+- Activity recreation/background reattaches to the same service and receives an immediate current snapshot; reconnect keeps the same `VoIPInstance`/recorder controller. Neither path creates another recording session or resets the timer, and auto-start remains guarded by the native first-established/session state.
+- FGS decision: retained the production Recorder `CallForegroundStateMachine` integration because Telegram X 1813 still had no equivalent transition guard. Incoming ringing uses `SHORT_SERVICE`; answering promotes to `MICROPHONE` only after the required permission/service checks. This preserves the 1813 call implementation while covering the Android 14+ transition.
+- Tests: the first focused test compilation exposed the repository's missing JUnit dependency. Added only `testImplementation("junit:junit:4.13.2")`; `CallForegroundStateMachineTest` then passed with `testLatestArm64DebugUnitTest`.
+- Final build: `./gradlew assembleLatestArm64Debug --console=plain` — `BUILD SUCCESSFUL` (301 actionable tasks).
+- APK: `app/build/outputs/apk/latestArm64/debug/Telegram-X-Recorder-0.29.0.1813-arm64-v8a-debug.apk`.
+- Remaining PART 4: repository/browser/details integration, playback, share/save/ZIP/delete, recordings list/settings entry, and crash-recovery UI. None was started in PART 3. Runtime validation was not performed.

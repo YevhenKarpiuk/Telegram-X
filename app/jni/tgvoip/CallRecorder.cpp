@@ -2,6 +2,7 @@
 
 #include <android/log.h>
 
+#include <absl/numeric/int128.h>
 #include <common_audio/resampler/include/push_resampler.h>
 #include <ogg/ogg.h>
 #include <opus.h>
@@ -166,10 +167,10 @@ int64_t MonotonicEndToWallTimeMs(
     int64_t recordingStartWallTimeMs,
     int64_t sessionStartMonotonicNs,
     int64_t sessionEndMonotonicNs) noexcept {
-  const __int128 rawDeltaNs = static_cast<__int128>(
+  const absl::int128 rawDeltaNs = static_cast<absl::int128>(
       sessionEndMonotonicNs) - sessionStartMonotonicNs;
-  const __int128 deltaNs = std::max<__int128>(0, rawDeltaNs);
-  const __int128 result = static_cast<__int128>(
+  const absl::int128 deltaNs = std::max<absl::int128>(0, rawDeltaNs);
+  const absl::int128 result = static_cast<absl::int128>(
       recordingStartWallTimeMs) + deltaNs / 1000000;
   if (result > std::numeric_limits<int64_t>::max()) {
     return std::numeric_limits<int64_t>::max();
@@ -363,8 +364,8 @@ constexpr bool AdvanceTimestampDiagnosticState(
     int64_t &lastReportedDeltaSamples,
     int64_t deltaSamples,
     TimestampDiscontinuity::Phase &phase) noexcept {
-  const __int128 delta = deltaSamples;
-  const __int128 magnitude = delta >= 0 ? delta : -delta;
+  const absl::int128 delta = deltaSamples;
+  const absl::int128 magnitude = delta >= 0 ? delta : -delta;
   phase = TimestampDiscontinuity::Phase::Entered;
   if (!active) {
     if (magnitude <= kTimestampDiagnosticEnterSamples) {
@@ -375,8 +376,8 @@ constexpr bool AdvanceTimestampDiagnosticState(
     active = false;
     phase = TimestampDiscontinuity::Phase::Restored;
   } else {
-    const __int128 difference = delta - lastReportedDeltaSamples;
-    const __int128 differenceMagnitude = difference >= 0
+    const absl::int128 difference = delta - lastReportedDeltaSamples;
+    const absl::int128 differenceMagnitude = difference >= 0
         ? difference : -difference;
     if (differenceMagnitude <= kTimestampDiagnosticReportStepSamples) {
       return false;
@@ -412,14 +413,13 @@ constexpr bool MonotonicNsToTimelineSample(
     result = 0;
     return true;
   }
-  const __int128 delta = static_cast<__int128>(timestampNs) -
-      static_cast<__int128>(sessionStartNs);
-  const __int128 samples =
-      (delta * kOutputSampleRate + 500000000LL) / 1000000000LL;
-  if (samples < 0 || samples > std::numeric_limits<uint64_t>::max()) {
-    return false;
-  }
-  result = static_cast<uint64_t>(samples);
+  // The positive difference of two int64_t values fits in uint64_t, even
+  // across zero. Split before multiplying to preserve rounding on ARM32.
+  const uint64_t delta = static_cast<uint64_t>(timestampNs) -
+      static_cast<uint64_t>(sessionStartNs);
+  result = (delta / 1000000000ULL) * kOutputSampleRate +
+      ((delta % 1000000000ULL) * kOutputSampleRate + 500000000ULL) /
+          1000000000ULL;
   return true;
 }
 
@@ -498,13 +498,8 @@ constexpr uint32_t QueueDepth(size_t head, size_t tail) noexcept {
 constexpr bool TimelineSamplesToMilliseconds(
     uint64_t samples,
     uint64_t &result) noexcept {
-  const __int128 milliseconds =
-      static_cast<__int128>(samples) * 1000 / kOutputSampleRate;
-  if (milliseconds < 0 ||
-      milliseconds > std::numeric_limits<uint64_t>::max()) {
-    return false;
-  }
-  result = static_cast<uint64_t>(milliseconds);
+  result = (samples / kOutputSampleRate) * 1000 +
+      (samples % kOutputSampleRate) * 1000 / kOutputSampleRate;
   return true;
 }
 
@@ -513,16 +508,36 @@ constexpr bool SimulateContinuousCallbacks(
     uint64_t callbackCount,
     uint64_t samplesPerCallback,
     uint64_t &finalTimelineEnd) noexcept {
-  const __int128 finalPosition =
-      static_cast<__int128>(initialTimelineEnd) +
-      static_cast<__int128>(callbackCount) * samplesPerCallback;
-  if (finalPosition < 0 ||
-      finalPosition > std::numeric_limits<uint64_t>::max()) {
+  if (samplesPerCallback != 0 &&
+      callbackCount > (std::numeric_limits<uint64_t>::max() -
+          initialTimelineEnd) / samplesPerCallback) {
     return false;
   }
-  finalTimelineEnd = static_cast<uint64_t>(finalPosition);
+  finalTimelineEnd = initialTimelineEnd + callbackCount * samplesPerCallback;
   return true;
 }
+
+constexpr bool RunPortableArithmeticRegressionChecks() noexcept {
+  constexpr uint64_t maxSamples = std::numeric_limits<uint64_t>::max();
+  uint64_t value = 0;
+  return MonotonicNsToTimelineSample(0, 10416, value) && value == 0 &&
+      MonotonicNsToTimelineSample(0, 10417, value) && value == 1 &&
+      MonotonicNsToTimelineSample(
+          std::numeric_limits<int64_t>::min(),
+          std::numeric_limits<int64_t>::max(), value) &&
+      value == 885443715538058ULL &&
+      TimelineSamplesToMilliseconds(maxSamples, value) &&
+      value == 384307168202282325ULL &&
+      SimulateContinuousCallbacks(maxSamples - 480, 1, 480, value) &&
+      value == maxSamples &&
+      !SimulateContinuousCallbacks(maxSamples - 480, 2, 480, value) &&
+      SimulateContinuousCallbacks(maxSamples, maxSamples, 0, value) &&
+      value == maxSamples;
+}
+
+static_assert(
+    RunPortableArithmeticRegressionChecks(),
+    "portable timeline arithmetic must preserve rounding and overflow checks");
 
 constexpr bool RunSessionTimelineRegressionChecks() noexcept {
   struct TrackModel {
@@ -635,7 +650,7 @@ constexpr bool RunSessionTimelineRegressionChecks() noexcept {
   const uint64_t lateDropped = std::min(
       kTenMs, kCommitCursor - kLateStart);
   constexpr uint64_t kPartialLateStart = 29760;
-  const uint64_t partialLateDropped = std::min(
+  const uint64_t partialLateDropped = std::min<uint64_t>(
       kOpusFrameSamples, kCommitCursor - kPartialLateStart);
   if (lateDropped != kTenMs || partialLateDropped != 240 ||
       kOpusFrameSamples - partialLateDropped != 720) {
@@ -811,9 +826,12 @@ constexpr bool RunSessionTimelineRegressionChecks() noexcept {
       uint32_t sampleRate,
       uint16_t channels,
       uint64_t &samples) constexpr noexcept {
-    const __int128 numerator =
-        static_cast<__int128>(framesPerChannel) * kOutputSampleRate;
-    if (sampleRate == 0 || channels == 0 || numerator % sampleRate != 0) {
+    if (sampleRate == 0 || channels == 0 || framesPerChannel >
+        std::numeric_limits<uint64_t>::max() / kOutputSampleRate) {
+      return false;
+    }
+    const uint64_t numerator = framesPerChannel * kOutputSampleRate;
+    if (numerator % sampleRate != 0) {
       return false;
     }
     samples = static_cast<uint64_t>(numerator / sampleRate);
@@ -1686,8 +1704,8 @@ public:
       }
       if (ShouldRecordContinuityDiagnostic(
               hadContinuity, controlBoundarySegment)) {
-        const __int128 deltaSamples =
-            static_cast<__int128>(timestampCandidate) - previousEnd;
+        const absl::int128 deltaSamples =
+            static_cast<absl::int128>(timestampCandidate) - previousEnd;
         updateTimestampDiagnostic(
             track, side, sequence, deltaSamples);
       }
@@ -1824,10 +1842,10 @@ public:
   }
 
   int64_t timelineDifferenceSamples() const noexcept {
-    const __int128 difference =
-        static_cast<__int128>(finalTimelineSamples_) -
+    const absl::int128 difference =
+        static_cast<absl::int128>(finalTimelineSamples_) -
         timelineExpectedFromMonotonic_;
-    return static_cast<int64_t>(std::clamp<__int128>(
+    return static_cast<int64_t>(std::clamp<absl::int128>(
         difference,
         std::numeric_limits<int64_t>::min(),
         std::numeric_limits<int64_t>::max()));
@@ -1952,7 +1970,7 @@ public:
     const Track &track = trackFor(side);
     return track.audioSamplesWritten <= finalTimelineSamples_ &&
         track.silenceSamplesWritten <= finalTimelineSamples_ &&
-        static_cast<__int128>(track.audioSamplesWritten) +
+        static_cast<absl::int128>(track.audioSamplesWritten) +
             track.silenceSamplesWritten == finalTimelineSamples_;
   }
 
@@ -2214,9 +2232,9 @@ private:
       Track &track,
       StreamSide side,
       uint64_t sequence,
-      __int128 deltaSamples) noexcept {
+      absl::int128 deltaSamples) noexcept {
     const int64_t clampedDeltaSamples = static_cast<int64_t>(
-        std::clamp<__int128>(
+        std::clamp<absl::int128>(
             deltaSamples,
             std::numeric_limits<int64_t>::min(),
             std::numeric_limits<int64_t>::max()));
@@ -2229,14 +2247,14 @@ private:
             phase)) {
       return;
     }
-    const __int128 deltaMs =
+    const absl::int128 deltaMs =
         deltaSamples * 1000 / kOutputSampleRate;
     try {
       if (discontinuities_.size() < kMaxTimestampDiscontinuities) {
         discontinuities_.push_back(TimestampDiscontinuity {
             .side = side,
             .sequence = sequence,
-            .deltaMs = static_cast<int64_t>(std::clamp<__int128>(
+            .deltaMs = static_cast<int64_t>(std::clamp<absl::int128>(
                 deltaMs,
                 std::numeric_limits<int64_t>::min(),
                 std::numeric_limits<int64_t>::max())),

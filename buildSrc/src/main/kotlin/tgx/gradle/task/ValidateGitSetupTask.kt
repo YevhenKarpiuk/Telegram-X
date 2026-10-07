@@ -1,6 +1,7 @@
 package tgx.gradle.task
 
 import org.eclipse.jgit.lfs.LfsPointer
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
@@ -29,7 +30,8 @@ abstract class ValidateGitSetupTask : DefaultTask() {
   @TaskAction
   fun validateGitSetup() {
     val mainRepo = requireDir(mainDir.get().asFile)
-    if (!mainRepo.resolve(".git").isDirectory) {
+    if (!mainRepo.resolve(".git").exists() ||
+        FileRepositoryBuilder().findGitDir(mainRepo).gitDir?.isDirectory != true) {
       fatal("Fetch repository with submodules via git")
     }
     if (mainRepo.absolutePath.any(Char::isWhitespace)) {

@@ -815,7 +815,7 @@ public class UI {
       /*if (Strings.isEmpty(inputLanguageCode)) {
         try {
           String id = android.provider.Settings.Secure.getString(
-            UI.getAppContext().getContentResolver(),
+            AppContext.get().getContentResolver(),
             android.provider.Settings.Secure.DEFAULT_INPUT_METHOD
           );
           if (!Strings.isEmpty(id)) {

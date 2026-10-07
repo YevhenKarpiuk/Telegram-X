@@ -23,8 +23,8 @@ public class ApplicationIdentityTest {
 
   @Test
   public void recorderReleaseIdentityIsIndependentFromUpstreamVersioning () {
-    assertEquals(3, BuildConfig.TGXR_RELEASE_VERSION);
-    assertEquals("1.1.0", BuildConfig.TGXR_RELEASE_NAME);
+    assertEquals(4, BuildConfig.TGXR_RELEASE_VERSION);
+    assertEquals("1.2.0", BuildConfig.TGXR_RELEASE_NAME);
     assertTrue(BuildConfig.VERSION_CODE > 1808303);
     assertTrue(BuildConfig.VERSION_NAME.startsWith(BuildConfig.TGXR_RELEASE_NAME));
   }

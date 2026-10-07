@@ -1,5 +1,7 @@
 # Telegram X Recorder: Telegram X 1816 integration
 
+Новая версия APK: [Telegram X Recorder 1.2.0](TGXR_1.2.0_RELEASE.md). Ниже сохранены результаты первоначальной интеграционной сборки 1.1.0.
+
 ## Итог
 
 - Обновлено до `TGX-Android/Telegram-X:main` — `7e3e3a3b1d658addd10514e2efd97de6e3ba1a42`, база `0.29.0.1816`. SHA повторно проверен в конце работы.

@@ -20,8 +20,8 @@ plugins {
 
 val config = tgxConfig.config.get()
 val recorderApplicationId = "ka.soft.tgxr"
-val recorderReleaseVersion = 3
-val recorderReleaseName = "1.1.0"
+val recorderReleaseVersion = 4
+val recorderReleaseName = "1.2.0"
 val isRecorderBuild = config.applicationId == recorderApplicationId
 val generateBaselineProfile = tgxConfig.generateBaselineProfile.get()
 val useLegacyNdk = tgxConfig.useLegacyNdk.get()

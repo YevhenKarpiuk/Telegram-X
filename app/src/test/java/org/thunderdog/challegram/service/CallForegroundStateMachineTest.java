@@ -60,6 +60,32 @@ public class CallForegroundStateMachineTest {
       decide(CallForegroundStateMachine.State.ACTIVE_MICROPHONE, true, true, false, false, true, false));
   }
 
+  @Test
+  public void notificationAnswerPromotesBeforeRingingEnds () {
+    int state = decide(CallForegroundStateMachine.State.NONE,
+      true, true, false, false, true, false);
+    state = decide(state, true, true, true, false, true, false);
+    assertEquals(CallForegroundStateMachine.State.ACTIVE_MICROPHONE, state);
+    state = decide(state, true, false, false, false, true, false);
+    assertEquals(CallForegroundStateMachine.State.ACTIVE_MICROPHONE, state);
+    assertEquals(CallForegroundStateMachine.RequestedType.MICROPHONE,
+      CallForegroundStateMachine.requestedTypeForState(state, 34));
+    assertEquals(CallForegroundStateMachine.State.NONE,
+      decide(state, true, false, false, false, true, true));
+  }
+
+  @Test
+  public void answerWithoutPermissionWaitsForPermissionUi () {
+    int state = decide(CallForegroundStateMachine.State.NONE,
+      true, true, false, false, false, false);
+    state = decide(state, true, true, true, false, false, false);
+    assertEquals(CallForegroundStateMachine.State.RINGING, state);
+    assertEquals(CallForegroundStateMachine.RequestedType.SHORT_SERVICE,
+      CallForegroundStateMachine.requestedTypeForState(state, 34));
+    assertEquals(CallForegroundStateMachine.State.ACTIVE_MICROPHONE,
+      decide(state, true, true, true, false, true, false));
+  }
+
   private static int decide (
     int currentState,
     boolean incoming,

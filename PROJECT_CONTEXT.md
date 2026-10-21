@@ -1,32 +1,30 @@
 # Telegram X Recorder
 
-## Цель
-Обновить Recorder 1.2.0 / Telegram X 1816 до актуального upstream/main, собрать и проверить Recorder 1.3.0 для ARM32/ARM64. Работать в новой upgrade/recorder-tgx-1819, исходные ветки не менять. Не выполнять push, публикацию или merge в исходные ветки.
+## Цель и результат
+Обновление Recorder 1.2.0 / Telegram X 0.29.0.1816 до Recorder 1.3.0 / Telegram X 0.29.1.1819 завершено локально. Подробности и SHA/пути APK: [docs/TGX_1819_RECORDER_UPGRADE.md](docs/TGX_1819_RECORDER_UPGRADE.md).
 
-## Контекст и ограничения
-- Android Java/Kotlin/C++, TDLib, WebRTC, tgcalls с PCM hooks из YevhenKarpiuk/tgcalls.
-- Исходный HEAD ebbc5573, текущая ветка при старте upgrade/call-recording-latest; call-recording-dev на том же коммите.
-- Существующие локальные изменения: содержимое tdlib (ещё не исследовано), неотслеживаемая .codex-remote-attachments/. Сохранять их.
-- Сохранять package ka.soft.tgxr, подпись, старый формат записей, все режимы и управление записью; не менять секреты и local.properties.
-- Документация базы: docs/TGXR_1.2.0_RELEASE.md, docs/TGX_1816_UPGRADE.md.
-- Окружение ранее: JDK 25, SDK/NDK в C:/tools/android/sdk, MSYS2 UCRT64 в builds/tools/msys64. Проверить фактическое состояние.
+## Ветка и зависимости
+- Рабочая ветка upgrade/recorder-tgx-1819, интеграционный код 18a774d8bfa31b67cd98f56ccfdd383d22a92323; родители ebbc5573 и upstream c26c0efa34b294179b48d909c7a5d64b6038b00d. Финальный дополнительный коммит меняет только документацию.
+- Backup backup/recorder-before-1819 = ebbc5573. Исходные main, call-recording и call-recording-dev не изменены. Push/публикация/merge в них не выполнялись.
+- TDLib wrapper b47cd822, source a94b83d6; core bc5320f4, leveldb a57a3557, td utils 61d4ea0b. Все pinned submodules совпадают; LFS fsck PASS; критичные SHA опубликованы.
+- tgcalls Recorder 29e43315 (форк YevhenKarpiuk/tgcalls, ветка upgrade/tgx-1816-recorder), upstream engine 1a00b961, WebRTC 7b03082. В актуальном upstream tgcalls/WebRTC не менялись, PCM hooks и безопасное завершение сохранены.
 
-## Состояние и проверки
-- Прочитаны документы прежней интеграции. Новые сборки и тесты запущены, результат пока ожидается.
-- Обычный Git submodule status заблокирован sandbox при обращении к общему gitdir worktree; требуется штатное разрешение инструментов.
+## Реализация и решения
+- Сохранены ka.soft.tgxr, Telegram X Recorder, сертификат 1.2.0, старый формат/каталог записей, все режимы и управление записью.
+- Интегрированы новые SDK flavors/ABI splits, Gradle 9.8.2, TDLib и остальные изменения upstream. Recorder version 1.3.0, внутренний номер 5; версия Android выше предыдущей.
+- CMake принимает новые tens/qrs; старая дублирующая настройка relocs удалена в пользу upstream RELR. Сохранены foreground state machine и permission/answer семантика через CallManager → TGCallService.prepareForIncomingCallAnswer.
+- Native Recorder, JNI, repository, playback/export и управление звонками сохранены без изменений относительно 1.2.0. Новые тесты foreground transitions; обновлён identity test.
+- Новый latest minSdk 33; дополнительно собраны tens (API 24–28) и qrs (29–32), чтобы сохранить охват прежних APK.
 
-## Интеграция 1819
-- Проверенный upstream/main: c26c0efa34b294179b48d909c7a5d64b6038b00d, version.app=1819 (21.10.2026). История upstream переписана относительно 1816, потребовался merge с проверкой дополнительных конфликтов.
-- Backup: backup/recorder-before-1819 = ebbc5573. Новая ветка upgrade/recorder-tgx-1819; merge ещё не закоммичен.
-- tgcalls 29e43315 и WebRTC 7b03082 не менялись в upstream. Форк tgcalls публикует 29e43315 в upgrade/tgx-1816-recorder, SHA доступен для клонирования.
-- TDLib b47cd822 (source a94b83d6), core bc5320f4, leveldb a57a3557, td utils 61d4ea0b; выполнены pinned submodule update и tdlib LFS pull.
-- Локальная правка OpenSSL — только окончания строк test/smime-eml/pkcs7-empty-digest-set.eml, сохранена на месте и в builds/pre-1819-openssl.patch.
-- Разрешены конфликты Gradle, CMake, TGCallService. Сохранены Recorder foreground state machine и upstream семантика microphone promotion/permission UI. Убрана дублирующая старая опция relocs, добавлены новые SDK flavors в CMake whitelist.
-- Подготовлены версия 1.3.0 / внутренний номер 5 и регрессионные проверки foreground переходов.
+## Проверки и артефакты
+- JDK C:/tools/java/jdk-25.0.4.1+1, SDK C:/tools/android/sdk, NDK 30.0.16248370, MSYS2 UCRT64; использовать существующие local.properties и signing configuration.
+- Полная финальная команда: gradlew.bat :app:assembleLatestDebug :app:testLatestDebugUnitTest :app:assembleLatestRelease :app:assembleTensRelease :app:assembleQrsRelease -Pabi=arm --console=plain --max-workers=4. BUILD SUCCESSFUL, 38m 47s, 926 задач. Лог builds/tgx-1819-final-build.log.
+- Все 36 тестов PASS: repository 24, foreground 9, identity 3; ошибок/пропусков нет.
+- Четыре APK: app/build/outputs/apk/latest/debug/Telegram-X-Recorder-v1.3.0-debug.apk; latest/release/Telegram-X-Recorder-v1.3.0.apk; tens/release/Telegram-X-Recorder-v1.3.0-nougatOreoPie.apk; qrs/release/Telegram-X-Recorder-v1.3.0-QRS.apk (последние три пути также под app/build/outputs/apk/).
+- Для каждого APK PASS: подпись и сертификат 1.2.0, versionCode, ARM32/ARM64, ELF/imports, native exports и DEX поля/методы JNI, ZIP и ARM64 ELF alignment 16 KiB. Результаты builds/tgx-1819-verification.json; скрипт builds/verify1819.py.
 
-## Следующий шаг
-- `tasks --all -Pabi=arm`: BUILD SUCCESSFUL (1m 58s), Gradle 9.8.2. Задачи :app:assembleLatestDebug, :app:testLatestDebugUnitTest, :app:assembleLatestRelease запущены с -Pabi=arm, лог builds/tgx-1819-build.log.
-- Новый latest требует API 33 вместо 24; дополнительно собрать штатные tens (24–28) и qrs (29–32) для сохранения охвата прежней версии.
-- ADB работает, устройств нет. Фактическое обновление приложения и реальные звонки не проверены.
-- Отчёт docs/TGX_1819_RECORDER_UPGRADE.md создан, результаты пока ожидаются. Проверочный локальный скрипт: builds/verify1819.py.
-- Следующий шаг: закончить сборки/тесты, проверить подписи, ARM ELF/JNI и версии APK, затем обновить отчёт.
+## Ограничения и следующий шаг
+- ADB работает, устройств нет. Реальные звонки/обе стороны/три режима, пауза, синхронизация, playback/export реального аудио и обновление установленного приложения с сохранением данных на устройстве не проверены. APK готовы к установке и таким проверкам.
+- Существующая правка окончаний строк tdlib/source/openssl/test/smime-eml/pkcs7-empty-digest-set.eml и .codex-remote-attachments/ сохранены. Pre/post patch совпадают побайтно, копии в builds/. Секреты, ключи и local.properties не переписывались.
+- Для сборки Isolated Projects требует configuration cache; не использовать --no-configuration-cache. Сохранять проверки, Recorder hooks, формат данных и исходные ветки.
+- Следующий шаг: установить подходящий Release поверх 1.2.0 без удаления приложения и проверить реальные звонки, режимы, восстановление, воспроизведение и экспорт на ARM32/ARM64.

@@ -73,7 +73,7 @@ Package identity remains `ka.soft.tgxr`, product name `Telegram X Recorder`, Rec
 - `UI`'s remaining live call to removed `getAppContext()` is migrated to `AppContext.get()`.
 - A `tasks --all` attempt compiled buildSrc successfully, then stopped because TDLib had not finished initialization (`tdlib/version.txt` absent). This was a dependency-order issue, not bypassed validation.
 - The first Universal build exposed the system Git for Windows `core.autocrlf=true`: libvpx ARM32 assembly generation embedded CR in include filenames. Local `core.autocrlf=false` / `core.eol=lf` are applied in the main repository and all submodules. Already materialized CRLF text in libvpx, FFmpeg and Opus was restored to the original LF bytes; their indexes still exactly match their pinned commits. No dependency source changes were committed. Use LF when initializing these submodules on Windows.
-- Supplied Windows signing properties referenced their old transfer directory. The first release compilation completed but signature verification correctly rejected its unsigned APK; after wiring the actual signing properties, Gradle also reported the old JKS path. Only ignored local configuration is corrected: `local.properties` refers to `builds/signing.local.properties`, which retains the supplied credentials and points to `C:/Users/ka/sec/tgxr-release.jks`. Original files in `sec` are not modified. The unsigned intermediate is not a deliverable.
+- Supplied Windows signing properties referenced their old transfer directory. The first release compilation completed but signature verification correctly rejected its unsigned APK; after wiring the actual signing properties, Gradle also reported the old JKS path. Only ignored local configuration is corrected: `local.properties` refers to `builds/signing.local.properties`, which retains the supplied credentials and points to `<private-keystore>`. Original files in `sec` are not modified. The unsigned intermediate is not a deliverable.
 - ARM32 exposed pre-existing Recorder assumptions from the earlier ARM64-only builds: primitive `__int128` is unsupported, and a `std::min` mixed `size_t` and `uint64_t`. `CallRecorder.cpp` now uses the already-linked `absl::int128` for wide signed arithmetic, exact quotient/remainder conversions for constexpr timeline operations, and explicit `uint64_t` for that minimum. Metadata saturation, diagnostic hysteresis, sample rounding, accounting, mixing, file format and storage are preserved.
 - All previous compile-time regression checks remain enabled. New checks cover half-sample rounding, the full signed timestamp span, maximum sample counts and callback overflow. A host differential check compares the actual updated functions with the original backup source for 1,000,000 checks with intrinsic int128 and another 1,000,000 with Abseil's software fallback; both pass. Local reproduction: `powershell -NoProfile -ExecutionPolicy Bypass -File builds/check-recorder-arithmetic.ps1` (MinGW GCC required).
 
@@ -87,7 +87,7 @@ Package identity remains `ka.soft.tgxr`, product name `Telegram X Recorder`, Rec
 
 Debug artifact:
 
-- Path: `C:/Users/ka/Documents/prog/m-l/Telegram-X-call-recording-dev/app/build/outputs/apk/latestUniversal/debug/Telegram-X-Recorder-v1.1.0-debug.apk`.
+- Path: `app/build/outputs/apk/latestUniversal/debug/Telegram-X-Recorder-v1.1.0-debug.apk`.
 - Size: `104671809` bytes.
 - SHA-256: `83b2c7e5563da91bd7b202d1df9f06d16f164da4bb9ad5dbf1526f08a118f485`.
 - Verified package `ka.soft.tgxr`, versionCode `1816000`, versionName `1.1.0-universal-debug`, label `Telegram X Recorder`, ABIs `arm64-v8a` and `armeabi-v7a`, compileSdk `37`.
@@ -97,7 +97,7 @@ Final combined Debug rebuild and the same 34 tests succeed with the corrected si
 Release artifact:
 
 - Command: `assembleLatestUniversalRelease --console=plain --max-workers=4` — `BUILD SUCCESSFUL` (343 actionable tasks; final incremental run 1 minute 48 seconds). R8 minification and resource shrinking remain enabled.
-- Path: `C:/Users/ka/Documents/prog/m-l/Telegram-X-call-recording-dev/app/build/outputs/apk/latestUniversal/release/Telegram-X-Recorder-v1.1.0.apk`.
+- Path: `app/build/outputs/apk/latestUniversal/release/Telegram-X-Recorder-v1.1.0.apk`.
 - Size: `86037577` bytes.
 - SHA-256: `39a101969d06516eb639ea6600b85a9121eb2379a1393871c24e928c61c713fc`.
 - Verified package `ka.soft.tgxr`, versionCode `1816300`, versionName `1.1.0-universal`, label `Telegram X Recorder`, ABIs `arm64-v8a` and `armeabi-v7a`, compileSdk `37`.

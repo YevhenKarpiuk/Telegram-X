@@ -22,7 +22,6 @@ Recorder обновлён с Telegram X 0.29.0.1816 до **0.29.1.1819**.
 | 10–12 | [Telegram-X-Recorder-v1.3.0-QRS.apk](https://github.com/YevhenKarpiuk/Telegram-X/releases/download/tgxr-v1.3.0/Telegram-X-Recorder-v1.3.0-QRS.apk) | 1819400 |
 | 7–9 | [Telegram-X-Recorder-v1.3.0-nougatOreoPie.apk](https://github.com/YevhenKarpiuk/Telegram-X/releases/download/tgxr-v1.3.0/Telegram-X-Recorder-v1.3.0-nougatOreoPie.apk) | 1819300 |
 
-Для диагностики доступен [Debug APK, Android 13+](https://github.com/YevhenKarpiuk/Telegram-X/releases/download/tgxr-v1.3.0/Telegram-X-Recorder-v1.3.0-debug.apk), versionCode 1819000. Для обычного обновления выбирайте Release.
 
 Рядом с каждым APK опубликован файл `.sha256`, общий список — `SHA256SUMS.txt`.
 

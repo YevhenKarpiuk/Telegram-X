@@ -195,7 +195,7 @@ Risk: **MEDIUM**. The textual change is small, but source availability and targe
 - Recorder artifacts now use the independent version name while retaining variant suffixes. The verified debug name is `Telegram-X-Recorder-v1.1.0-arm64-v8a-debug.apk`; the prepared release name is `Telegram-X-Recorder-v1.1.0-arm64-v8a.apk`.
 - `ApplicationIdentityTest` now covers applicationId/provider authority, product name, Recorder release integer/name, and a versionCode newer than `1808303`. Together with `CallRecordingRepositoryTest` and `CallForegroundStateMachineTest`, all tests passed (`BUILD SUCCESSFUL`, 157 actionable tasks).
 - `./gradlew assembleLatestArm64Debug --console=plain` passed (`BUILD SUCCESSFUL`, 301 actionable tasks).
-- Both `output-metadata.json` and `/home/ka/Android/Sdk/build-tools/37.0.0/aapt dump badging` confirm debug package `ka.soft.tgxr`, versionCode `1813000`, versionName `1.1.0-arm64-v8a-debug`, label `Telegram X Recorder`, and native ABI `arm64-v8a`.
+- Both `output-metadata.json` and `$ANDROID_SDK_ROOT/build-tools/37.0.0/aapt dump badging` confirm debug package `ka.soft.tgxr`, versionCode `1813000`, versionName `1.1.0-arm64-v8a-debug`, label `Telegram X Recorder`, and native ABI `arm64-v8a`.
 - PART 5.3 remains responsible for production signing, final release build and artifact verification, tag, push, and release publication. None was performed in PART 5.2.
 
 ## PART 5.3A release build

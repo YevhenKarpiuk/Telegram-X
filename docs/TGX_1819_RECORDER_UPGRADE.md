@@ -107,13 +107,13 @@ $env:MSYSTEM = 'UCRT64'
 
 Полные пути и SHA-256:
 
-- `C:/Users/ka/Documents/prog/m-l/Telegram-X-call-recording-dev/app/build/outputs/apk/latest/debug/Telegram-X-Recorder-v1.3.0-debug.apk`
+- `app/build/outputs/apk/latest/debug/Telegram-X-Recorder-v1.3.0-debug.apk`
   SHA-256: `de829d2fbab4363c8717095d1126d389357b968da8552e98b2f8fc375297b4a2`.
-- `C:/Users/ka/Documents/prog/m-l/Telegram-X-call-recording-dev/app/build/outputs/apk/latest/release/Telegram-X-Recorder-v1.3.0.apk`
+- `app/build/outputs/apk/latest/release/Telegram-X-Recorder-v1.3.0.apk`
   SHA-256: `2383d5547d78daf7bfb40bd0a9fdc652b9bf69c928a290c3e16bcdad3860c39c`.
-- `C:/Users/ka/Documents/prog/m-l/Telegram-X-call-recording-dev/app/build/outputs/apk/tens/release/Telegram-X-Recorder-v1.3.0-nougatOreoPie.apk`
+- `app/build/outputs/apk/tens/release/Telegram-X-Recorder-v1.3.0-nougatOreoPie.apk`
   SHA-256: `1c9bf3c86e28e39d92464f3d3bf37ca9c00752eb14eac6c6103557bf78864037`.
-- `C:/Users/ka/Documents/prog/m-l/Telegram-X-call-recording-dev/app/build/outputs/apk/qrs/release/Telegram-X-Recorder-v1.3.0-QRS.apk`
+- `app/build/outputs/apk/qrs/release/Telegram-X-Recorder-v1.3.0-QRS.apk`
   SHA-256: `3c92790061386cb316ce6d25face98e23608d7b21c2b82fcf4e775056d348740`.
 
 ## Совместимость и ограничения
@@ -147,3 +147,7 @@ ADB проверен повторно после сборок: устройст�
 Перенос завершён: GitHub подтвердил fast-forward обеих веток `ebbc5573..8f7fd79a` одной успешной командой `git push --atomic`, без `--force`, `--force-with-lease` или принудительных refspec. Remote SHA обеих веток совпали с upgrade-веткой; `main` остался `9312ace3`, тег 1.3.0 — `07294c70`. Следующий коммит фиксирует только результаты переноса. Локальные указатели обеих веток обновлены, dev-каталог переключён на `call-recording-dev`. Все 263 пути резервного рабочего каталога повторно проверены побайтно после отправки.
 
 Локальная `call-recording` отставала на `7f8032be`, её каталог содержал 263 изменения окончаний строк. Чтобы сохранить их отдельно и не включить в публикацию, каталог переключён на `backup/call-recording-worktree-before-1.3.0` с тем же старым HEAD. Содержимое всех 263 путей проверено побайтно до и после переключения; резервные snapshot/patch находятся в `builds/call-recording-worktree-before-promote.json` и `.patch`. Затем освобождённый указатель `call-recording` можно продвинуть к 1.3.0. Основной dev-каталог используется с веткой `call-recording-dev`.
+
+## Очистка публикации
+
+Debug APK и его `.sha256` удалены из релиза по запросу пользователя. Общий `SHA256SUMS.txt` и описание обновлены; доступны только три Release APK для Android 7–9, 10–12 и 13+ и контрольные суммы. Локальные абсолютные пути заменены относительными. Исторические разделы выше описывают состояние на момент соответствующих проверок.

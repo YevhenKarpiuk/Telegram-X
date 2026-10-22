@@ -3,6 +3,8 @@
 ## Цель и результат
 Обновление Recorder 1.2.0 / Telegram X 0.29.0.1816 до Recorder 1.3.0 / Telegram X 0.29.1.1819 завершено локально. Подробности и SHA/пути APK: [docs/TGX_1819_RECORDER_UPGRADE.md](docs/TGX_1819_RECORDER_UPGRADE.md).
 
+22.10.2026 пользователь явно разрешил обновить GitHub и опубликовать релизы. Готовится публикация ветки upgrade/recorder-tgx-1819 и релиза tgxr-v1.3.0 с тремя Release APK, Debug и SHA-256. Исходные main/call-recording/call-recording-dev сохраняются согласно исходному условию; force push и merge в них не выполняются.
+
 ## Ветка и зависимости
 - Рабочая ветка upgrade/recorder-tgx-1819, интеграционный код 18a774d8bfa31b67cd98f56ccfdd383d22a92323; родители ebbc5573 и upstream c26c0efa34b294179b48d909c7a5d64b6038b00d. Финальный дополнительный коммит меняет только документацию.
 - Backup backup/recorder-before-1819 = ebbc5573. Исходные main, call-recording и call-recording-dev не изменены. Push/публикация/merge в них не выполнялись.
@@ -27,4 +29,4 @@
 - ADB работает, устройств нет. Реальные звонки/обе стороны/три режима, пауза, синхронизация, playback/export реального аудио и обновление установленного приложения с сохранением данных на устройстве не проверены. APK готовы к установке и таким проверкам.
 - Существующая правка окончаний строк tdlib/source/openssl/test/smime-eml/pkcs7-empty-digest-set.eml и .codex-remote-attachments/ сохранены. Pre/post patch совпадают побайтно, копии в builds/. Секреты, ключи и local.properties не переписывались.
 - Для сборки Isolated Projects требует configuration cache; не использовать --no-configuration-cache. Сохранять проверки, Recorder hooks, формат данных и исходные ветки.
-- Следующий шаг: установить подходящий Release поверх 1.2.0 без удаления приложения и проверить реальные звонки, режимы, восстановление, воспроизведение и экспорт на ARM32/ARM64.
+- Следующий шаг: отправить upgrade-ветку, опубликовать tgxr-v1.3.0 и проверить remote SHA/файлы релиза. Затем требуется проверка реальных звонков на устройстве.

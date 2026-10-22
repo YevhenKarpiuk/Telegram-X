@@ -132,4 +132,8 @@ ADB проверен повторно после сборок: устройст�
 - Upstream повторно проверен после всех сборок: `c26c0efa34b294179b48d909c7a5d64b6038b00d`.
 - `main`, `call-recording`, `call-recording-dev` остались на исходных SHA. Рабочая ветка — `upgrade/recorder-tgx-1819`, backup — `backup/recorder-before-1819`.
 - Начальная правка OpenSSL сохранена побайтно: SHA-256 pre/post patch `194d8b049aaff5e482c8f3e271a3a3460d91f5c565d0df91f79578a47ab2879a`. В статусе остаётся исходное `m tdlib` и пользовательская `.codex-remote-attachments/`; это не новые незакоммиченные изменения реализации.
-- Секреты, signing properties, JKS и `local.properties` не перезаписывались. Push, Release и merge в исходные ветки не выполнялись.
+- Секреты, signing properties, JKS и `local.properties` не перезаписывались. При интеграции 21.10.2026 push, Release и merge в исходные ветки не выполнялись.
+
+## Публикация 22.10.2026
+
+Пользователь отдельно разрешил публикацию GitHub. [Описание Recorder 1.3.0](TGXR_1.3.0_RELEASE.md), [релиз tgxr-v1.3.0](https://github.com/YevhenKarpiuk/Telegram-X/releases/tag/tgxr-v1.3.0), ветка исходников `upgrade/recorder-tgx-1819`. В релиз включены четыре проверенных APK, отдельные файлы `.sha256` и общий `SHA256SUMS.txt`. Ветки `main`, `call-recording`, `call-recording-dev` сохраняются; merge и force push не требуются. APK соответствуют коду `18a774d8`; последующие изменения касаются только документации.

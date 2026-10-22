@@ -3,11 +3,13 @@
 ## Цель и результат
 Обновление Recorder 1.2.0 / Telegram X 0.29.0.1816 до Recorder 1.3.0 / Telegram X 0.29.1.1819 завершено локально. Подробности и SHA/пути APK: [docs/TGX_1819_RECORDER_UPGRADE.md](docs/TGX_1819_RECORDER_UPGRADE.md).
 
-22.10.2026 по прямому разрешению пользователя опубликованы ветка upgrade/recorder-tgx-1819 и Latest-релиз [tgxr-v1.3.0](https://github.com/YevhenKarpiuk/Telegram-X/releases/tag/tgxr-v1.3.0). В релизе три Release APK, Debug, четыре файла .sha256 и SHA256SUMS.txt; все 9 размеров и SHA-256 подтверждены GitHub API. Тег указывает на 07294c70492368a5ac0a057978f96a73ca735132, код APK — 18a774d8. Исходные main/call-recording/call-recording-dev сохранены; force push и merge в них не выполнялись.
+22.10.2026 по прямому разрешению пользователя опубликованы ветка upgrade/recorder-tgx-1819 и Latest-релиз [tgxr-v1.3.0](https://github.com/YevhenKarpiuk/Telegram-X/releases/tag/tgxr-v1.3.0). В релизе три Release APK, Debug, четыре файла .sha256 и SHA256SUMS.txt; все 9 размеров и SHA-256 подтверждены GitHub API. Тег указывает на 07294c70492368a5ac0a057978f96a73ca735132, код APK — 18a774d8.
+
+Затем пользователь явно разрешил перенести 1.3.0 в call-recording-dev и call-recording и отправить обе ветки без force push. Для обеих удалённых веток исходная точка ebbc5573 является предком готового обновления; применяется fast-forward и атомарный push. main и релизный тег не меняются.
 
 ## Ветка и зависимости
-- Рабочая ветка upgrade/recorder-tgx-1819, интеграционный код 18a774d8bfa31b67cd98f56ccfdd383d22a92323; родители ebbc5573 и upstream c26c0efa34b294179b48d909c7a5d64b6038b00d. Финальный дополнительный коммит меняет только документацию.
-- Backup backup/recorder-before-1819 = ebbc5573. Исходные main, call-recording и call-recording-dev не изменены. Опубликованы только upgrade-ветка и тег tgxr-v1.3.0; исходные ветки не обновлялись.
+- Интеграционный код 18a774d8bfa31b67cd98f56ccfdd383d22a92323; родители ebbc5573 и upstream c26c0efa34b294179b48d909c7a5d64b6038b00d. Последующие коммиты меняют только документацию. call-recording-dev, call-recording и upgrade/recorder-tgx-1819 синхронизируются на одну вершину; рабочая ветка основного каталога — call-recording-dev.
+- Backup backup/recorder-before-1819 = ebbc5573. В каталоге ../Telegram-X-call-recording были 263 незакоммиченных изменения окончаний строк. Он сохранён на backup/call-recording-worktree-before-1.3.0 (7f8032be); содержимое всех 263 путей проверено побайтно. Исходные правки не включены в перенос. Snapshot и patch: builds/call-recording-worktree-before-promote.{json,patch}.
 - TDLib wrapper b47cd822, source a94b83d6; core bc5320f4, leveldb a57a3557, td utils 61d4ea0b. Все pinned submodules совпадают; LFS fsck PASS; критичные SHA опубликованы.
 - tgcalls Recorder 29e43315 (форк YevhenKarpiuk/tgcalls, ветка upgrade/tgx-1816-recorder), upstream engine 1a00b961, WebRTC 7b03082. В актуальном upstream tgcalls/WebRTC не менялись, PCM hooks и безопасное завершение сохранены.
 
@@ -28,5 +30,5 @@
 ## Ограничения и следующий шаг
 - ADB работает, устройств нет. Реальные звонки/обе стороны/три режима, пауза, синхронизация, playback/export реального аудио и обновление установленного приложения с сохранением данных на устройстве не проверены. APK готовы к установке и таким проверкам.
 - Существующая правка окончаний строк tdlib/source/openssl/test/smime-eml/pkcs7-empty-digest-set.eml и .codex-remote-attachments/ сохранены. Pre/post patch совпадают побайтно, копии в builds/. Секреты, ключи и local.properties не переписывались.
-- Для сборки Isolated Projects требует configuration cache; не использовать --no-configuration-cache. Сохранять проверки, Recorder hooks, формат данных и исходные ветки.
+- Для сборки Isolated Projects требует configuration cache; не использовать --no-configuration-cache. Сохранять проверки, Recorder hooks, формат данных и локальные пользовательские правки. main не менять; обновление call-recording-dev/call-recording разрешено текущим запросом, только fast-forward без force push.
 - Публикация завершена: релиз id 420492239, draft=false, prerelease=false, Latest=true; опубликован 22.10.2026. Снимок API и результаты проверки — builds/tgxr-1.3.0-release-published.json. Следующий шаг — установка подходящего Release поверх 1.2.0 и проверка реальных звонков на устройстве.
